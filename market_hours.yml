@@ -1,0 +1,352 @@
+# ========================================
+# ⏰ SYMBOL MARKET HOURS CONFIGURATION
+# ========================================
+# Times are in MT5 SERVER TIME (typically UTC+2 / UTC+3 during DST).
+# Copy session hours from MT5 terminal: Right-click symbol → Specification → Sessions.
+#
+# Format per day: "HH:MM-HH:MM"  (24-hour, open-close)
+# Multiple sessions per day: ["HH:MM-HH:MM", "HH:MM-HH:MM"]
+# Market closed: leave empty or omit the day.
+
+# US Stocks
+AAPL.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+AMZN.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+# Forex
+AUDCAD:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+AUDCHF:
+  monday:    "00:05-23:59"
+  tuesday:   "00:05-23:59"
+  wednesday: "00:05-23:59"
+  thursday:  "00:05-23:59"
+  friday:    "00:05-23:55"
+
+AUDJPY:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+AUDUSD:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+# Crypto
+BTCUSD:
+  sunday:    "00:00-23:59"
+  monday:    "00:00-23:59"
+  tuesday:   "00:00-23:59"
+  wednesday: "00:00-23:59"
+  thursday:  "00:00-23:59"
+  friday:    "00:00-23:55"
+  saturday:  "00:00-23:59"
+
+# Forex
+CADCHF:
+  monday:    "00:05-23:59"
+  tuesday:   "00:05-23:59"
+  wednesday: "00:05-23:59"
+  thursday:  "00:05-23:59"
+  friday:    "00:05-23:55"
+
+# Commodities
+COPPER:
+  monday:    "01:01-23:59"
+  tuesday:   "01:01-23:59"
+  wednesday: "01:01-23:59"
+  thursday:  "01:01-23:59"
+  friday:    "01:01-23:55"
+
+# Crypto
+ETHUSD:
+  sunday:    "00:01-23:59"
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+  saturday:  "00:01-23:59"
+
+# Forex
+EURAUD:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+EURCAD:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+EURCHF:
+  monday:    "00:05-23:59"
+  tuesday:   "00:05-23:59"
+  wednesday: "00:05-23:59"
+  thursday:  "00:05-23:59"
+  friday:    "00:05-23:55"
+
+EURGBP:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+EURJPY:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+EURNZD:
+  monday:    "00:05-23:59"
+  tuesday:   "00:05-23:59"
+  wednesday: "00:05-23:59"
+  thursday:  "00:05-23:59"
+  friday:    "00:05-23:55"
+
+EURUSD:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+GBPAUD:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+GBPUSD:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+# Indices
+GER40:
+  monday:    "03:15-22:59"
+  tuesday:   "03:15-22:59"
+  wednesday: "03:15-22:59"
+  thursday:  "03:15-22:59"
+  friday:    "03:15-22:55"
+
+# US Stocks
+GOOGL.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+# US ETFs
+IWM.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+# Indices
+JPN225:
+  monday:    "01:00-23:59"
+  tuesday:   "01:00-23:59"
+  wednesday: "01:00-23:59"
+  thursday:  "01:00-23:59"
+  friday:    "01:00-23:55"
+
+# US Stocks
+META.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+MSFT.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+# Indices
+NAS100:
+  monday:    "01:00-23:59"
+  tuesday:   "01:00-23:59"
+  wednesday: "01:00-23:59"
+  thursday:  "01:00-23:59"
+  friday:    "01:00-23:55"
+
+# Commodities
+NATGAS:
+  monday:    "01:00-23:59"
+  tuesday:   "01:00-23:59"
+  wednesday: "01:00-23:59"
+  thursday:  "01:00-23:59"
+  friday:    "01:00-23:55"
+
+# US Stocks
+NVDA.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+# Forex
+NZDJPY:
+  monday:    "00:05-23:59"
+  tuesday:   "00:05-23:59"
+  wednesday: "00:05-23:59"
+  thursday:  "00:05-23:59"
+  friday:    "00:05-23:55"
+
+NZDUSD:
+  monday:    "00:05-23:59"
+  tuesday:   "00:05-23:59"
+  wednesday: "00:05-23:59"
+  thursday:  "00:05-23:59"
+  friday:    "00:05-23:55"
+
+# US ETFs
+QQQ.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+# Commodities
+SPOTBRENT:
+  monday:    "01:00-23:59"
+  tuesday:   "03:00-23:59"
+  wednesday: "03:00-23:59"
+  thursday:  "03:00-23:59"
+  friday:    "03:00-23:55"
+
+SPOTCRUDE:
+  monday:    "01:00-23:59"
+  tuesday:   "01:00-23:59"
+  wednesday: "01:00-23:59"
+  thursday:  "01:00-23:59"
+  friday:    "01:00-23:55"
+
+# US ETFs
+SPY.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
+
+# Indices
+UK100:
+  monday:    "03:05-22:59"
+  tuesday:   "03:00-22:59"
+  wednesday: "03:00-22:59"
+  thursday:  "03:00-22:59"
+  friday:    "03:00-22:55"
+
+US2000:
+  monday:    "01:00-23:59"
+  tuesday:   "01:00-23:59"
+  wednesday: "01:00-23:59"
+  thursday:  "01:00-23:59"
+  friday:    "01:00-23:55"
+
+US30:
+  monday:    "01:00-23:59"
+  tuesday:   "01:00-23:59"
+  wednesday: "01:00-23:59"
+  thursday:  "01:00-23:59"
+  friday:    "01:00-23:55"
+
+US500:
+  monday:    "01:00-23:59"
+  tuesday:   "01:00-23:59"
+  wednesday: "01:00-23:59"
+  thursday:  "01:00-23:59"
+  friday:    "01:00-23:55"
+
+# Forex
+USDCAD:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+USDCHF:
+  monday:    "00:05-23:59"
+  tuesday:   "00:05-23:59"
+  wednesday: "00:05-23:59"
+  thursday:  "00:05-23:59"
+  friday:    "00:05-23:55"
+
+USDJPY:
+  monday:    "00:01-23:59"
+  tuesday:   "00:01-23:59"
+  wednesday: "00:01-23:59"
+  thursday:  "00:01-23:59"
+  friday:    "00:01-23:55"
+
+# Indices / Volatility
+VIX:
+  monday:    "01:00-23:59"
+  tuesday:   "01:00-23:59"
+  wednesday: "01:00-23:59"
+  thursday:  "01:00-23:59"
+  friday:    "01:00-23:55"
+
+# Precious Metals
+XAGUSD:
+  monday:    "01:01-23:59"
+  tuesday:   "01:01-23:59"
+  wednesday: "01:01-23:59"
+  thursday:  "01:01-23:59"
+  friday:    "01:01-23:55"
+
+XAUUSD:
+  monday:    "01:01-23:59"
+  tuesday:   "01:01-23:59"
+  wednesday: "01:01-23:59"
+  thursday:  "01:01-23:59"
+  friday:    "01:01-23:55"
+
+# US ETFs
+XLE.US:
+  monday:    "16:31-22:59"
+  tuesday:   "16:31-22:59"
+  wednesday: "16:31-22:59"
+  thursday:  "16:31-22:59"
+  friday:    "16:31-22:55"
