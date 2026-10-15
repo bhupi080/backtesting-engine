@@ -12,3 +12,8 @@ dependencies = [
     "service-identity>=24.2.0",
     "tzdata>=2024.1",
 ]
+
+[tool.uv.workspace]
+members = [
+    "backend",
+]
