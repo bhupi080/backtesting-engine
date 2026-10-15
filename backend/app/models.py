@@ -108,20 +108,58 @@ class PaginatedTrades(BaseModel):
 class SimTradeResult(BaseModel):
     trade_id: int
     side: str
-    open_time: str | None
-    close_time: str | None
-    open_price: float | None
-    close_price: float | None
-    size: float
-    pnl: float | None
-    tv_net_pnl: float | None
-    cumulative_pnl: float
+    open_time: str | None = None
+    close_time: str | None = None
+    open_price: float | None = None
+    close_price: float | None = None
+    size: float = 0.0
+    pnl: float | None = None
+    tv_net_pnl: float | None = None
+    cumulative_pnl: float = 0.0
+    status: str | None = None
+    fill_entry_time: str | None = None
+    fill_exit_time: str | None = None
+    fill_entry_price: float | None = None
+    fill_exit_price: float | None = None
+    entry_slip_pips: float | None = None
+    exit_slip_pips: float | None = None
+    sim_pnl_usd: float | None = None
+    tv_pnl_usd: float | None = None
+    net_pnl_usd: float | None = None
+    commission_usd: float | None = None
+    max_runup_usd: float | None = None
+    max_drawdown_usd: float | None = None
 
 
 class EquityPoint(BaseModel):
     t: str
     equity: float
-    drawdown: float
+    drawdown: float = 0.0
+
+
+class SimSummary(BaseModel):
+    trades: int
+    filled: int
+    skipped: int
+    sim_pnl_usd: float
+    tv_pnl_usd: float
+    pnl_diff_usd: float
+    win_rate: float
+    wins: int
+    losses: int
+    profit_factor: float | None
+    max_drawdown_pct: float
+    ending_equity: float
+    return_pct: float
+
+
+class SimSettings(BaseModel):
+    lots: float
+    commission_per_lot: float
+    starting_balance: float
+    contract_size: int
+    pip_size: float
+    chart_tf_minutes: int = 10
 
 
 class SimulateResponse(BaseModel):
@@ -133,6 +171,11 @@ class SimulateResponse(BaseModel):
     max_drawdown: float
     trades: list[SimTradeResult]
     equity: list[EquityPoint]
+    # trade_id (string) → intra-trade floating PnL path
+    trade_equity: dict[str, list[EquityPoint]] = Field(default_factory=dict)
+    summary: SimSummary | None = None
+    settings: SimSettings | None = None
+    meta: dict[str, Any] | None = None
 
 
 class SymbolStub(BaseModel):

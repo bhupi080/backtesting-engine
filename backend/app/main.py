@@ -22,7 +22,7 @@ from app.models import (
     TickJobCreateRequest,
     TickJobResponse,
 )
-from app import ticks_service, trades_service
+from app import tick_sim, ticks_service, trades_service
 from app.tick_download import jobs as tick_jobs
 from app.tick_download.jobs import TickJobCreate
 
@@ -128,8 +128,21 @@ def simulate(
     strategy_id: str = Query(...),
     from_ts: str | None = Query(None, alias="from"),
     to_ts: str | None = Query(None, alias="to"),
+    lots: float = Query(0.1, ge=0.01, le=10.0),
+    commission_per_lot: float = Query(7.0, ge=0.0, le=50.0),
+    starting_balance: float = Query(2000.0, ge=100.0, le=1_000_000.0),
+    chart_tf_minutes: int = Query(10, ge=0, le=240),
 ) -> SimulateResponse:
-    raw = trades_service.simulate(symbol, strategy_id, from_ts, to_ts)
+    raw = tick_sim.simulate(
+        symbol,
+        strategy_id,
+        lots=lots,
+        commission_per_lot=commission_per_lot,
+        starting_balance=starting_balance,
+        chart_tf_minutes=chart_tf_minutes,
+        from_ts=from_ts,
+        to_ts=to_ts,
+    )
     return SimulateResponse(**raw)
 
 

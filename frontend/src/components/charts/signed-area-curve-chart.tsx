@@ -4,6 +4,7 @@ import {
   AreaChart,
   CartesianGrid,
   ReferenceLine,
+  Scatter,
   XAxis,
   YAxis,
 } from "recharts"
@@ -18,6 +19,11 @@ export type CurvePoint = {
   meta?: Record<string, number | string | null | undefined>
 }
 
+export type ExtremumDot = {
+  time: number
+  pnl: number
+}
+
 export type SignedAreaCurveChartProps = {
   data: CurvePoint[]
   /** Tooltip / config label, e.g. "P&L" or "Δ price" */
@@ -26,8 +32,20 @@ export type SignedAreaCurveChartProps = {
   emptyMessage?: string
   /** Prepend a zero point just before the first sample */
   anchorAtZero?: boolean
-  /** Show ±500 / ±1000 guide lines (equity-style) */
+  /**
+   * @deprecated Level slabs removed — use showExtremumDots instead.
+   * Kept so callers compiling against old prop don't break.
+   */
   showLevelGuides?: boolean
+  /** Green max-runup + red max-DD dots on the curve (default true) */
+  showExtremumDots?: boolean
+  /** Optional override (e.g. backend MAE/MFE times); else derived from series */
+  extremumDots?: {
+    maxRunup?: ExtremumDot | null
+    maxDrawdown?: ExtremumDot | null
+  }
+  /** Interpolation: linear = honest ticks; monotone = smooth */
+  curveType?: "linear" | "monotone" | "stepAfter"
   /** Timezone for axis + tooltip */
   timeZone?: string
   /** Format tooltip main value */
@@ -43,8 +61,8 @@ const defaultFormatUsd = (n: number) =>
   }).format(n)
 
 /**
- * Reusable Precise-Equity-Curve visual (mt5-dashboard):
- * green area above 0, red below, gradients, vertical grid, reference levels.
+ * Signed area equity curve: green above 0, red below, optional
+ * max-runup (green) / max-DD (red) markers on the series extrema.
  */
 export function SignedAreaCurveChart({
   data,
@@ -52,7 +70,9 @@ export function SignedAreaCurveChart({
   className,
   emptyMessage = "No data",
   anchorAtZero = true,
-  showLevelGuides = true,
+  showExtremumDots = true,
+  extremumDots,
+  curveType = "linear",
   timeZone = "Europe/Bucharest",
   formatValue = defaultFormatUsd,
 }: SignedAreaCurveChartProps) {
@@ -108,6 +128,28 @@ export function SignedAreaCurveChart({
     const step = span / 4
     return [min, min + step, min + 2 * step, min + 3 * step, max]
   }, [displayData, xDomain])
+
+  const markers = useMemo(() => {
+    if (!showExtremumDots || displayData.length === 0) {
+      return { runup: null as ExtremumDot | null, drawdown: null as ExtremumDot | null }
+    }
+
+    let runup: ExtremumDot | null = extremumDots?.maxRunup ?? null
+    let drawdown: ExtremumDot | null = extremumDots?.maxDrawdown ?? null
+
+    if (runup == null || drawdown == null) {
+      let best = displayData[0]
+      let worst = displayData[0]
+      for (const p of displayData) {
+        if (p.pnl > best.pnl) best = p
+        if (p.pnl < worst.pnl) worst = p
+      }
+      if (runup == null) runup = { time: best.time, pnl: best.pnl }
+      if (drawdown == null) drawdown = { time: worst.time, pnl: worst.pnl }
+    }
+
+    return { runup, drawdown }
+  }, [displayData, showExtremumDots, extremumDots])
 
   if (displayData.length === 0) {
     return (
@@ -233,44 +275,74 @@ export function SignedAreaCurveChart({
           strokeDasharray="3 3"
           opacity={0.5}
         />
-        {showLevelGuides &&
-          [500, 1000, 1500, 2000].map((level) => (
-            <ReferenceLine
-              key={`pos-${level}`}
-              y={level}
-              stroke="#22c55e"
-              strokeWidth={1}
-              strokeDasharray="2 2"
-              opacity={0.3}
-            />
-          ))}
-        {showLevelGuides &&
-          [-500, -1000, -1500, -2000].map((level) => (
-            <ReferenceLine
-              key={`neg-${level}`}
-              y={level}
-              stroke="#ef4444"
-              strokeWidth={1}
-              strokeDasharray="2 2"
-              opacity={0.3}
-            />
-          ))}
         <Area
-          type="monotone"
+          type={curveType}
           dataKey="positive_pnl"
           stroke="#22c55e"
           strokeWidth={2}
           fill={`url(#${positiveGradientId})`}
           fillOpacity={0.4}
+          baseLine={0}
+          isAnimationActive={false}
+          dot={false}
+          activeDot={{ r: 3 }}
         />
         <Area
-          type="monotone"
+          type={curveType}
           dataKey="negative_pnl"
           stroke="#ef4444"
           strokeWidth={2}
           fill={`url(#${negativeGradientId})`}
           fillOpacity={0.4}
+          baseLine={0}
+          isAnimationActive={false}
+          dot={false}
+          activeDot={{ r: 3 }}
         />
+        {markers.runup ? (
+          <Scatter
+            data={[markers.runup]}
+            dataKey="pnl"
+            fill="#22c55e"
+            isAnimationActive={false}
+            shape={(props: { cx?: number; cy?: number }) => {
+              const { cx, cy } = props
+              if (cx == null || cy == null) return <g />
+              return (
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={6}
+                  fill="#22c55e"
+                  stroke="#fff"
+                  strokeWidth={1.5}
+                />
+              )
+            }}
+          />
+        ) : null}
+        {markers.drawdown ? (
+          <Scatter
+            data={[markers.drawdown]}
+            dataKey="pnl"
+            fill="#ef4444"
+            isAnimationActive={false}
+            shape={(props: { cx?: number; cy?: number }) => {
+              const { cx, cy } = props
+              if (cx == null || cy == null) return <g />
+              return (
+                <circle
+                  cx={cx}
+                  cy={cy}
+                  r={6}
+                  fill="#ef4444"
+                  stroke="#fff"
+                  strokeWidth={1.5}
+                />
+              )
+            }}
+          />
+        ) : null}
       </AreaChart>
     </ChartContainer>
   )

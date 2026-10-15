@@ -115,8 +115,48 @@ export type SimulateResponse = {
     cumulative_pnl: number
     open_time: string | null
     close_time: string | null
+    open_price?: number | null
+    close_price?: number | null
+    size?: number
+    status?: string | null
+    fill_entry_price?: number | null
+    fill_exit_price?: number | null
+    entry_slip_pips?: number | null
+    exit_slip_pips?: number | null
+    sim_pnl_usd?: number | null
+    tv_pnl_usd?: number | null
+    net_pnl_usd?: number | null
+    commission_usd?: number | null
+    max_runup_usd?: number | null
+    max_drawdown_usd?: number | null
   }[]
   equity: { t: string; equity: number; drawdown: number }[]
+  /** trade_id → intra-trade floating PnL path */
+  trade_equity?: Record<string, { t: string; equity: number; drawdown: number }[]>
+  summary?: {
+    trades: number
+    filled: number
+    skipped: number
+    sim_pnl_usd: number
+    tv_pnl_usd: number
+    pnl_diff_usd: number
+    win_rate: number
+    wins: number
+    losses: number
+    profit_factor: number | null
+    max_drawdown_pct: number
+    ending_equity: number
+    return_pct: number
+  }
+  settings?: {
+    lots: number
+    commission_per_lot: number
+    starting_balance: number
+    contract_size: number
+    pip_size: number
+    chart_tf_minutes: number
+  }
+  meta?: { rule?: string }
 }
 
 export type TickJob = {
@@ -182,6 +222,10 @@ export const api = {
     strategy_id: string
     from?: string
     to?: string
+    lots?: number
+    commission_per_lot?: number
+    starting_balance?: number
+    chart_tf_minutes?: number
   }) => getJson<SimulateResponse>("/simulate", p),
   createTickJob: (body: TickJobCreate) =>
     postJson<TickJob>("/ticks/jobs", body),
