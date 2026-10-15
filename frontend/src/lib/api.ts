@@ -15,6 +15,20 @@ async function getJson<T>(path: string, params?: Record<string, string | number 
   return res.json() as Promise<T>
 }
 
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  const url = new URL(path, API_BASE)
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status}: ${text}`)
+  }
+  return res.json() as Promise<T>
+}
+
 export type Dataset = {
   id: string
   symbol: string
@@ -105,9 +119,39 @@ export type SimulateResponse = {
   equity: { t: string; equity: number; drawdown: number }[]
 }
 
+export type TickJob = {
+  id: string
+  cmd: string
+  symbol: string | null
+  from_date: string | null
+  to_date: string | null
+  side: string
+  force: boolean
+  status: string
+  created_at: string
+  started_at: string | null
+  finished_at: string | null
+  return_code: number | null
+  error: string | null
+  argv: string[]
+  log: string[]
+  log_truncated: boolean
+  log_total_lines: number
+}
+
+export type TickJobCreate = {
+  cmd: "update" | "bootstrap"
+  symbol?: string
+  from_date?: string
+  to_date?: string
+  side?: "BOTH" | "BID" | "ASK"
+  force?: boolean
+}
+
 export const api = {
   health: () => getJson<{ status: string }>("/health"),
   datasets: () => getJson<Dataset[]>("/datasets"),
+  marketHoursSymbols: () => getJson<string[]>("/market-hours/symbols"),
   overview: (p: {
     symbol: string
     from?: string
@@ -139,4 +183,12 @@ export const api = {
     from?: string
     to?: string
   }) => getJson<SimulateResponse>("/simulate", p),
+  createTickJob: (body: TickJobCreate) =>
+    postJson<TickJob>("/ticks/jobs", body),
+  listTickJobs: (limit = 20) =>
+    getJson<TickJob[]>("/ticks/jobs", { limit }),
+  getTickJob: (id: string, log_tail = 200) =>
+    getJson<TickJob>(`/ticks/jobs/${id}`, { log_tail }),
+  cancelTickJob: (id: string) =>
+    postJson<TickJob>(`/ticks/jobs/${id}/cancel`),
 }

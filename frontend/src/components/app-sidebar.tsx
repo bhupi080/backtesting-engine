@@ -2,9 +2,9 @@ import { Link, useRouterState } from "@tanstack/react-router"
 import {
   Activity,
   BarChart3,
+  Database,
   GitCompare,
   Home,
-  LineChart,
   Table2,
   type LucideIcon,
 } from "lucide-react"
@@ -33,7 +33,7 @@ const nav: {
   color: string
 }[] = [
   { to: "/", label: "Home", icon: Home, color: "text-sky-400" },
-  { to: "/overview", label: "Overview", icon: LineChart, color: "text-emerald-400" },
+  { to: "/datasets", label: "Datasets", icon: Database, color: "text-emerald-400" },
   { to: "/ticks", label: "Ticks", icon: Table2, color: "text-amber-400" },
   { to: "/trades", label: "Trades", icon: BarChart3, color: "text-violet-400" },
   { to: "/simulate", label: "Simulate", icon: Activity, color: "text-rose-400" },
@@ -82,7 +82,7 @@ export function AppSidebar() {
                 alt=""
                 width={32}
                 height={32}
-                className="size-8 shrink-0 rounded-lg ring-1 ring-foreground/10"
+                className="size-8 shrink-0 rounded-full ring-1 ring-foreground/10"
               />
               <div className="grid min-w-0 flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold">

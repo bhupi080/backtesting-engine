@@ -12,7 +12,6 @@ export type FilterState = {
   strategyId: string
   from: string
   to: string
-  side: string
 }
 
 type FiltersContextValue = {
@@ -34,7 +33,6 @@ const emptyState: FilterState = {
   strategyId: "",
   from: "",
   to: "",
-  side: "",
 }
 
 const FiltersContext = createContext<FiltersContextValue | null>(null)
@@ -73,7 +71,6 @@ export function FiltersProvider({ children }: { children: ReactNode }) {
         strategyId: first.strategy_id,
         from: "",
         to: "",
-        side: "",
       }
       setDraftState(next)
       setApplied(next)

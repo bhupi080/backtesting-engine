@@ -19,8 +19,12 @@ from app.models import (
     SimulateResponse,
     StrategyInfo,
     SymbolStub,
+    TickJobCreateRequest,
+    TickJobResponse,
 )
 from app import ticks_service, trades_service
+from app.tick_download import jobs as tick_jobs
+from app.tick_download.jobs import TickJobCreate
 
 settings = get_settings()
 
@@ -143,3 +147,64 @@ def symbol_detail(symbol: str) -> SymbolStub:
 @app.get("/compare", response_model=CompareStub)
 def compare() -> CompareStub:
     return CompareStub()
+
+
+@app.get("/market-hours/symbols", response_model=list[str])
+def market_hours_symbols() -> list[str]:
+    """Symbols defined in repo-root market_hours.yml (required for tick jobs)."""
+    try:
+        return tick_jobs.list_market_hours_symbols()
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@app.post("/ticks/jobs", response_model=TickJobResponse, status_code=201)
+def create_tick_job(body: TickJobCreateRequest) -> TickJobResponse:
+    """Start bootstrap/update via backend copy of download_ticks (subprocess).
+
+    Does not use or modify repo-root download_ticks.py. One job at a time.
+    Avoid starting while a CLI download is writing the same data/ticks files.
+    """
+    try:
+        job = tick_jobs.start_job(
+            TickJobCreate(
+                cmd=body.cmd,
+                symbol=body.symbol,
+                from_date=body.from_date,
+                to_date=body.to_date,
+                side=body.side,
+                force=body.force,
+            )
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+    return TickJobResponse(**job.to_dict(log_tail=50))
+
+
+@app.get("/ticks/jobs", response_model=list[TickJobResponse])
+def list_tick_jobs(limit: int = Query(20, ge=1, le=100)) -> list[TickJobResponse]:
+    return [
+        TickJobResponse(**j.to_dict(log_tail=20)) for j in tick_jobs.list_jobs(limit=limit)
+    ]
+
+
+@app.get("/ticks/jobs/{job_id}", response_model=TickJobResponse)
+def get_tick_job(
+    job_id: str,
+    log_tail: int = Query(200, ge=0, le=2000),
+) -> TickJobResponse:
+    job = tick_jobs.get_job(job_id)
+    if job is None:
+        raise HTTPException(404, f"job not found: {job_id}")
+    return TickJobResponse(**job.to_dict(log_tail=log_tail))
+
+
+@app.post("/ticks/jobs/{job_id}/cancel", response_model=TickJobResponse)
+def cancel_tick_job(job_id: str) -> TickJobResponse:
+    try:
+        job = tick_jobs.cancel_job(job_id)
+    except KeyError:
+        raise HTTPException(404, f"job not found: {job_id}") from None
+    return TickJobResponse(**job.to_dict(log_tail=50))

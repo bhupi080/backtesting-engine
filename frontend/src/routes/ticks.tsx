@@ -34,7 +34,6 @@ function TicksPage() {
         symbol: applied.symbol,
         from: localInputToApi(applied.from),
         to: localInputToApi(applied.to),
-        side: applied.side || undefined,
         page,
         page_size: pageSize,
         sort,
@@ -60,7 +59,6 @@ function TicksPage() {
     <div className="space-y-4">
       <div className="flex items-end justify-between gap-2">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Ticks</h1>
           <p className="text-sm text-muted-foreground">
             {q.data ? `${q.data.total.toLocaleString()} rows` : "Loading…"} —{" "}
             {applied.symbol}

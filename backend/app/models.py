@@ -144,3 +144,34 @@ class CompareStub(BaseModel):
     status: str = "stub"
     message: str = "Compare endpoint not implemented yet"
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class TickJobCreateRequest(BaseModel):
+    cmd: Literal["update", "bootstrap"]
+    symbol: str | None = None
+    from_date: str | None = Field(
+        default=None, description="Required for bootstrap (YYYY-MM-DD)"
+    )
+    to_date: str | None = None
+    side: Literal["BOTH", "BID", "ASK"] = "BOTH"
+    force: bool = False
+
+
+class TickJobResponse(BaseModel):
+    id: str
+    cmd: str
+    symbol: str | None = None
+    from_date: str | None = None
+    to_date: str | None = None
+    side: str
+    force: bool = False
+    status: str
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+    return_code: int | None = None
+    error: str | None = None
+    argv: list[str] = Field(default_factory=list)
+    log: list[str] = Field(default_factory=list)
+    log_truncated: bool = False
+    log_total_lines: int = 0

@@ -36,7 +36,6 @@ function SimulatePage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Simulate</h1>
       <p className="text-sm text-muted-foreground">
         PnL from trade open/close prices (backend).
       </p>

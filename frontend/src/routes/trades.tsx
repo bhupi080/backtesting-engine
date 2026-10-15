@@ -41,13 +41,10 @@ function TradesPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-end justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Trades</h1>
-          <p className="text-sm text-muted-foreground">
-            {applied.symbol} / {applied.strategyId} —{" "}
-            {q.data ? `${q.data.total} trades` : "…"}
-          </p>
-        </div>
+        <p className="text-sm text-muted-foreground">
+          {applied.symbol} / {applied.strategyId} —{" "}
+          {q.data ? `${q.data.total} trades` : "…"}
+        </p>
         <div className="flex gap-2">
           <Button
             variant="outline"
