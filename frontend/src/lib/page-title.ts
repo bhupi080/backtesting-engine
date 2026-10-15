@@ -4,7 +4,6 @@ import {
   Database,
   GitCompare,
   Home,
-  Table2,
   type LucideIcon,
 } from "lucide-react"
 
@@ -29,13 +28,6 @@ export function pageMetaForPath(pathname: string): PageMeta {
       title: "Datasets",
       icon: Database,
       iconClass: "text-emerald-500 dark:text-emerald-400",
-    }
-  }
-  if (pathname.startsWith("/ticks")) {
-    return {
-      title: "Ticks",
-      icon: Table2,
-      iconClass: "text-amber-500 dark:text-amber-400",
     }
   }
   if (pathname.startsWith("/trades")) {

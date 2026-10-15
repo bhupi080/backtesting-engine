@@ -14,7 +14,6 @@ import { Route as CompareRouteImport } from './routes/compare'
 import { Route as DatasetsRouteImport } from './routes/datasets'
 import { Route as OverviewRouteImport } from './routes/overview'
 import { Route as SimulateRouteImport } from './routes/simulate'
-import { Route as TicksRouteImport } from './routes/ticks'
 import { Route as TradesRouteImport } from './routes/trades'
 import { Route as SymbolsSymbolRouteImport } from './routes/symbols.$symbol'
 
@@ -43,11 +42,6 @@ const SimulateRoute = SimulateRouteImport.update({
   path: '/simulate',
   getParentRoute: () => rootRouteImport,
 } as any)
-const TicksRoute = TicksRouteImport.update({
-  id: '/ticks',
-  path: '/ticks',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const TradesRoute = TradesRouteImport.update({
   id: '/trades',
   path: '/trades',
@@ -65,7 +59,6 @@ export interface FileRoutesByFullPath {
   '/datasets': typeof DatasetsRoute
   '/overview': typeof OverviewRoute
   '/simulate': typeof SimulateRoute
-  '/ticks': typeof TicksRoute
   '/trades': typeof TradesRoute
   '/symbols/$symbol': typeof SymbolsSymbolRoute
 }
@@ -75,7 +68,6 @@ export interface FileRoutesByTo {
   '/datasets': typeof DatasetsRoute
   '/overview': typeof OverviewRoute
   '/simulate': typeof SimulateRoute
-  '/ticks': typeof TicksRoute
   '/trades': typeof TradesRoute
   '/symbols/$symbol': typeof SymbolsSymbolRoute
 }
@@ -86,7 +78,6 @@ export interface FileRoutesById {
   '/datasets': typeof DatasetsRoute
   '/overview': typeof OverviewRoute
   '/simulate': typeof SimulateRoute
-  '/ticks': typeof TicksRoute
   '/trades': typeof TradesRoute
   '/symbols/$symbol': typeof SymbolsSymbolRoute
 }
@@ -98,7 +89,6 @@ export interface FileRouteTypes {
     | '/datasets'
     | '/overview'
     | '/simulate'
-    | '/ticks'
     | '/trades'
     | '/symbols/$symbol'
   fileRoutesByTo: FileRoutesByTo
@@ -108,7 +98,6 @@ export interface FileRouteTypes {
     | '/datasets'
     | '/overview'
     | '/simulate'
-    | '/ticks'
     | '/trades'
     | '/symbols/$symbol'
   id:
@@ -118,7 +107,6 @@ export interface FileRouteTypes {
     | '/datasets'
     | '/overview'
     | '/simulate'
-    | '/ticks'
     | '/trades'
     | '/symbols/$symbol'
   fileRoutesById: FileRoutesById
@@ -129,7 +117,6 @@ export interface RootRouteChildren {
   DatasetsRoute: typeof DatasetsRoute
   OverviewRoute: typeof OverviewRoute
   SimulateRoute: typeof SimulateRoute
-  TicksRoute: typeof TicksRoute
   TradesRoute: typeof TradesRoute
   SymbolsSymbolRoute: typeof SymbolsSymbolRoute
 }
@@ -171,13 +158,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SimulateRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/ticks': {
-      id: '/ticks'
-      path: '/ticks'
-      fullPath: '/ticks'
-      preLoaderRoute: typeof TicksRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/trades': {
       id: '/trades'
       path: '/trades'
@@ -201,7 +181,6 @@ const rootRouteChildren: RootRouteChildren = {
   DatasetsRoute: DatasetsRoute,
   OverviewRoute: OverviewRoute,
   SimulateRoute: SimulateRoute,
-  TicksRoute: TicksRoute,
   TradesRoute: TradesRoute,
   SymbolsSymbolRoute: SymbolsSymbolRoute,
 }

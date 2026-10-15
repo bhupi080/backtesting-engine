@@ -28,14 +28,6 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 
 export const Route = createFileRoute("/datasets")({
@@ -77,19 +69,6 @@ function formatLastTickShort(iso: string | null | undefined): string {
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
-    hour12: true,
-  })
-}
-
-function formatTickTime(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
     hour12: true,
   })
 }
@@ -301,8 +280,8 @@ function DatasetsPage() {
 
       <div className="grid min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-background/60 lg:grid-cols-[15rem_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col border-b border-border lg:border-r lg:border-b-0">
-          <div className="shrink-0 border-b border-border p-2.5">
-            <div className="relative">
+          <div className="flex h-12 shrink-0 items-center border-b border-border px-2.5">
+            <div className="relative w-full">
               <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={query}
@@ -393,101 +372,108 @@ function DatasetsPage() {
             </div>
           ) : (
             <>
-              <div className="shrink-0 space-y-2 border-b border-border px-3 py-2.5">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="font-mono text-base font-semibold tracking-tight">
-                        {symbol}
-                      </h2>
-                      {selected?.dataset ? (
-                        <Badge
-                          variant="secondary"
-                          className="h-5 text-[10px] text-emerald-700 dark:text-emerald-300"
-                        >
-                          On disk
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="h-5 text-[10px]">
-                          Empty
-                        </Badge>
-                      )}
-                      {!inMarketHours && (
-                        <Badge
-                          variant="destructive"
-                          className="h-5 text-[10px]"
-                        >
-                          Not in market_hours
-                        </Badge>
-                      )}
-                    </div>
-                    <div className="mt-2 inline-flex max-w-full items-center divide-x divide-border overflow-hidden rounded-md border border-border bg-muted/25 text-[11px]">
-                      <MetaStat
-                        label="Last"
-                        value={formatLastTick(selected?.dataset?.max_time_utc)}
-                      />
-                      <MetaStat
-                        label="Days"
-                        value={
-                          selected?.dataset
-                            ? selected.dataset.file_count.toLocaleString()
-                            : "—"
-                        }
-                      />
-                      <MetaStat
-                        label="Ticks"
-                        value={
-                          selected?.dataset
-                            ? formatCompact(selected.dataset.row_count)
-                            : "—"
-                        }
-                      />
-                    </div>
-                  </div>
+              <div className="relative flex h-12 shrink-0 items-center border-b border-border px-3">
+                <div className="relative z-10 inline-flex h-9 max-w-[min(100%,28rem)] items-center divide-x divide-border overflow-hidden rounded-lg border border-border bg-muted/30 text-[11px]">
+                  <MetaStat
+                    label="Last"
+                    value={formatLastTick(selected?.dataset?.max_time_utc)}
+                    valueClass="text-amber-600 dark:text-amber-400"
+                  />
+                  <MetaStat
+                    label="Days"
+                    value={
+                      selected?.dataset
+                        ? selected.dataset.file_count.toLocaleString()
+                        : "—"
+                    }
+                    valueClass="text-violet-600 dark:text-violet-400"
+                  />
+                  <MetaStat
+                    label="Ticks"
+                    value={
+                      selected?.dataset
+                        ? formatCompact(selected.dataset.row_count)
+                        : "—"
+                    }
+                    valueClass="text-sky-600 dark:text-sky-400"
+                  />
+                </div>
 
-                  <div className="flex shrink-0 flex-wrap items-center gap-2 sm:gap-2.5">
-                    <Button
-                      size="sm"
-                      className="bg-emerald-600 text-white hover:bg-emerald-600/90 dark:bg-emerald-500"
-                      disabled={!inMarketHours || jobBusy}
-                      onClick={() => setConfirm("update")}
-                    >
-                      <Download className="size-3.5" />
-                      Update
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="bg-violet-600 text-white hover:bg-violet-600/90 dark:bg-violet-500"
-                      disabled={jobBusy || withData === 0}
-                      onClick={() => setConfirm("update-all")}
-                    >
-                      <Layers className="size-3.5" />
-                      Update all
-                    </Button>
-                    <Button
-                      size="sm"
-                      className="bg-blue-800 text-white hover:bg-blue-800/90 dark:bg-blue-700 sm:ml-3"
-                      disabled={!inMarketHours || jobBusy}
-                      onClick={() => {
-                        setActionError(null)
-                        setBootstrapOpen(true)
-                      }}
-                    >
-                      <Plus className="size-3.5" />
-                      New dataset
-                    </Button>
+                <div className="pointer-events-none absolute inset-0 z-[1] flex items-center justify-center px-3">
+                  <div className="pointer-events-auto flex items-center gap-2">
+                    <h2 className="font-mono text-base leading-none font-semibold tracking-tight">
+                      {symbol}
+                    </h2>
+                    {selected?.dataset ? (
+                      <Badge
+                        variant="secondary"
+                        className="h-5 text-[10px] text-emerald-700 dark:text-emerald-300"
+                      >
+                        On disk
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="h-5 text-[10px]">
+                        Empty
+                      </Badge>
+                    )}
+                    {!inMarketHours && (
+                      <Badge
+                        variant="destructive"
+                        className="h-5 text-[10px]"
+                      >
+                        Not in market_hours
+                      </Badge>
+                    )}
                   </div>
                 </div>
 
-                {!inMarketHours && (
-                  <p className="text-xs text-destructive">
-                    Add this symbol to market_hours.yml before downloading.
-                  </p>
-                )}
-                {actionError && !bootstrapOpen && confirm === null && (
-                  <p className="text-xs text-destructive">{actionError}</p>
-                )}
+                <div className="relative z-10 ml-auto flex items-center gap-4">
+                  <Button
+                    size="sm"
+                    className="h-9 gap-1.5 bg-emerald-600 px-4 text-white hover:bg-emerald-600/90 dark:bg-emerald-500"
+                    disabled={!inMarketHours || jobBusy}
+                    onClick={() => setConfirm("update")}
+                  >
+                    <Download className="size-3.5" />
+                    Update
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-9 gap-1.5 bg-violet-600 px-4 text-white hover:bg-violet-600/90 dark:bg-violet-500"
+                    disabled={jobBusy || withData === 0}
+                    onClick={() => setConfirm("update-all")}
+                  >
+                    <Layers className="size-3.5" />
+                    Update all
+                  </Button>
+                  <Button
+                    size="sm"
+                    className="h-9 gap-1.5 bg-blue-800 px-4 text-white hover:bg-blue-800/90 dark:bg-blue-700"
+                    disabled={!inMarketHours || jobBusy}
+                    onClick={() => {
+                      setActionError(null)
+                      setBootstrapOpen(true)
+                    }}
+                  >
+                    <Plus className="size-3.5" />
+                    New dataset
+                  </Button>
+                </div>
               </div>
+
+              {(!inMarketHours ||
+                (actionError && !bootstrapOpen && confirm === null)) && (
+                <div className="shrink-0 space-y-1 border-b border-border px-3 py-2">
+                  {!inMarketHours && (
+                    <p className="text-xs text-destructive">
+                      Add this symbol to market_hours.yml before downloading.
+                    </p>
+                  )}
+                  {actionError && !bootstrapOpen && confirm === null && (
+                    <p className="text-xs text-destructive">{actionError}</p>
+                  )}
+                </div>
+              )}
 
               <RecentTicksTable
                 hasData={Boolean(selected?.dataset)}
@@ -638,17 +624,40 @@ function KpiStat({
   )
 }
 
-function MetaStat({ label, value }: { label: string; value: string }) {
+function MetaStat({
+  label,
+  value,
+  valueClass,
+}: {
+  label: string
+  value: string
+  valueClass?: string
+}) {
   return (
-    <div className="flex min-w-0 items-baseline gap-1.5 px-2.5 py-1">
-      <span className="shrink-0 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+    <div className="flex h-full min-w-0 items-center gap-1.5 px-3">
+      <span className="shrink-0 text-[10px] leading-none font-medium tracking-wide text-muted-foreground uppercase">
         {label}
       </span>
-      <span className="truncate font-semibold tabular-nums text-foreground">
+      <span
+        className={cn(
+          "truncate text-[12px] leading-none font-semibold tabular-nums",
+          valueClass ?? "text-foreground",
+        )}
+      >
         {value}
       </span>
     </div>
   )
+}
+
+function splitTickTime(value: string): { date: string; time: string } {
+  const trimmed = value.trim()
+  const space = trimmed.indexOf(" ")
+  if (space <= 0) return { date: trimmed, time: "" }
+  return {
+    date: trimmed.slice(0, space),
+    time: trimmed.slice(space + 1),
+  }
 }
 
 function RecentTicksTable({
@@ -675,18 +684,40 @@ function RecentTicksTable({
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
         <p className="text-sm text-muted-foreground">
-          No ticks on disk yet. Use <span className="font-medium">New dataset</span>{" "}
-          to download history.
+          No ticks on disk yet. Use{" "}
+          <span className="font-medium">New dataset</span> to download history.
         </p>
       </div>
     )
   }
 
+  const rowGrid =
+    "grid grid-cols-4 items-center gap-x-6 px-4"
+
   if (loading) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
-        <Skeleton className="h-8 w-48" />
-        <Skeleton className="min-h-0 flex-1 w-full rounded-lg" />
+      <div className="flex min-h-0 flex-1 flex-col">
+        <div className="shrink-0 border-b border-border px-4 py-2.5">
+          <Skeleton className="h-4 w-28" />
+          <Skeleton className="mt-1.5 h-3 w-40" />
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {Array.from({ length: 14 }).map((_, i) => (
+            <div
+              key={i}
+              className={cn(
+                rowGrid,
+                "h-9 border-b border-border/40",
+                i % 2 === 1 && "bg-muted/15",
+              )}
+            >
+              <Skeleton className="h-3 w-40" />
+              <Skeleton className="h-3 w-40" />
+              <Skeleton className="mx-auto h-3 w-8" />
+              <Skeleton className="ml-auto h-3 w-16" />
+            </div>
+          ))}
+        </div>
       </div>
     )
   }
@@ -701,77 +732,79 @@ function RecentTicksTable({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-2">
-        <p className="text-xs font-medium text-muted-foreground">
-          Recent ticks
-          <span className="ml-1.5 tabular-nums text-foreground/70">
-            showing {rows.length}
-            {total > rows.length ? ` of ${total.toLocaleString()}` : ""}
-          </span>
-        </p>
-        <span className="text-[10px] tracking-wide text-muted-foreground uppercase">
-          newest first
+      <div className="flex shrink-0 items-end justify-between gap-3 border-b border-border px-4 py-2.5">
+        <div>
+          <p className="text-sm font-medium tracking-tight">Recent ticks</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+            {rows.length.toLocaleString()}
+            {total > rows.length ? ` of ${total.toLocaleString()}` : ""} shown
+          </p>
+        </div>
+        <span className="pb-0.5 text-[10px] tracking-wide text-muted-foreground uppercase">
+          Newest first
         </span>
       </div>
+
       <div className="min-h-0 flex-1 overflow-auto">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead className="sticky top-0 bg-background/95 backdrop-blur">
-                Time (UTC)
-              </TableHead>
-              <TableHead className="sticky top-0 bg-background/95 backdrop-blur">
-                Broker
-              </TableHead>
-              <TableHead className="sticky top-0 bg-background/95 backdrop-blur">
-                Side
-              </TableHead>
-              <TableHead className="sticky top-0 bg-background/95 text-right backdrop-blur">
-                Price
-              </TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {rows.length === 0 ? (
-              <TableRow>
-                <TableCell
-                  colSpan={4}
-                  className="h-24 text-center text-muted-foreground"
-                >
-                  No ticks found.
-                </TableCell>
-              </TableRow>
-            ) : (
-              rows.map((row) => (
-                <TableRow
-                  key={`${row.timestamp_ms}-${row.side}-${row.price}`}
-                >
-                  <TableCell className="font-mono text-[11px] tabular-nums">
-                    {formatTickTime(row.time_utc)}
-                  </TableCell>
-                  <TableCell className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                    {formatTickTime(row.time_broker)}
-                  </TableCell>
-                  <TableCell>
-                    <span
-                      className={cn(
-                        "rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide uppercase",
-                        row.side === "BID"
-                          ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                          : "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-                      )}
-                    >
-                      {row.side}
-                    </span>
-                  </TableCell>
-                  <TableCell className="text-right font-mono text-[11px] font-medium tabular-nums">
-                    {row.price}
-                  </TableCell>
-                </TableRow>
-              ))
-            )}
-          </TableBody>
-        </Table>
+        <div
+          className={cn(
+            rowGrid,
+            "sticky top-0 z-10 h-10 border-b border-border bg-muted/70 text-[10px] font-medium tracking-wider text-muted-foreground uppercase backdrop-blur-sm",
+          )}
+        >
+          <span>UTC</span>
+          <span>Broker</span>
+          <span className="text-center">Side</span>
+          <span className="text-right">Price</span>
+        </div>
+
+        {rows.length === 0 ? (
+          <div className="flex h-28 items-center justify-center text-sm text-muted-foreground">
+            No ticks found.
+          </div>
+        ) : (
+          rows.map((row, i) => {
+            const utc = splitTickTime(row.time_utc)
+            const broker = splitTickTime(row.time_broker)
+            const isBid = row.side === "BID"
+            return (
+              <div
+                key={`${row.timestamp_ms}-${row.side}-${row.price}`}
+                className={cn(
+                  rowGrid,
+                  "border-b border-border/50 py-2.5 transition-colors hover:bg-sky-500/[0.06]",
+                  i % 2 === 1 && "bg-muted/20",
+                )}
+              >
+                <div className="flex min-w-0 items-baseline gap-2 font-mono text-[11px] tabular-nums">
+                  <span className="shrink-0 text-muted-foreground">
+                    {utc.date}
+                  </span>
+                  <span className="font-medium text-foreground">{utc.time}</span>
+                </div>
+                <div className="flex min-w-0 items-baseline gap-2 font-mono text-[11px] tabular-nums text-muted-foreground">
+                  <span className="shrink-0">{broker.date}</span>
+                  <span>{broker.time}</span>
+                </div>
+                <div className="flex justify-center">
+                  <span
+                    className={cn(
+                      "inline-flex min-w-[2.25rem] items-center justify-center rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide",
+                      isBid
+                        ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                        : "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+                    )}
+                  >
+                    {isBid ? "Bid" : "Ask"}
+                  </span>
+                </div>
+                <span className="text-right font-mono text-[13px] font-semibold tabular-nums tracking-tight text-foreground">
+                  {row.price}
+                </span>
+              </div>
+            )
+          })
+        )}
       </div>
     </div>
   )

@@ -5,7 +5,6 @@ import {
   Database,
   GitCompare,
   Home,
-  Table2,
   type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
@@ -34,7 +33,6 @@ const nav: {
 }[] = [
   { to: "/", label: "Home", icon: Home, color: "text-sky-400" },
   { to: "/datasets", label: "Datasets", icon: Database, color: "text-emerald-400" },
-  { to: "/ticks", label: "Ticks", icon: Table2, color: "text-amber-400" },
   { to: "/trades", label: "Trades", icon: BarChart3, color: "text-violet-400" },
   { to: "/simulate", label: "Simulate", icon: Activity, color: "text-rose-400" },
   { to: "/compare", label: "Compare", icon: GitCompare, color: "text-orange-400" },

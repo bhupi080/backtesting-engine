@@ -1,11 +1,33 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from app.config import Settings, get_settings
 from app import duckdb_client as db
+
+_DEFAULT_BROKER_TZ = "Europe/Bucharest"
+_TZ_NAME_RE = re.compile(r"^[A-Za-z0-9_+\-/]+$")
+
+
+def broker_tz_name(settings: Settings | None = None) -> str:
+    """IANA broker TZ from tick manifest; safe fallback for SQL embedding."""
+    tz = (load_manifest(settings).get("broker_tz") or _DEFAULT_BROKER_TZ).strip()
+    if not _TZ_NAME_RE.fullmatch(tz):
+        return _DEFAULT_BROKER_TZ
+    return tz
+
+
+def _fmt_utc(expr: str) -> str:
+    """DuckDB: format timestamptz/timestamp as UTC wall clock."""
+    return f"strftime(timezone('UTC', {expr}), '%Y-%m-%d %H:%M:%S.%g')"
+
+
+def _fmt_broker(expr: str, tz: str) -> str:
+    """DuckDB: format timestamptz/timestamp as broker wall clock."""
+    return f"strftime(timezone('{tz}', {expr}), '%Y-%m-%d %H:%M:%S.%g')"
 
 
 def _symbol_dirs(settings: Settings) -> list[Path]:
@@ -59,14 +81,15 @@ def list_datasets(settings: Settings | None = None) -> list[dict[str, Any]]:
         if not files:
             continue
         glob = parquet_glob(symbol, settings)
+        tz = broker_tz_name(settings)
         stats = db.query_one(
             f"""
             SELECT
               count(*)::BIGINT AS row_count,
-              cast(min(time_utc) AS VARCHAR) AS min_time_utc,
-              cast(max(time_utc) AS VARCHAR) AS max_time_utc,
-              cast(min(time_broker) AS VARCHAR) AS min_time_broker,
-              cast(max(time_broker) AS VARCHAR) AS max_time_broker
+              {_fmt_utc("min(time_utc)")} AS min_time_utc,
+              {_fmt_utc("max(time_utc)")} AS max_time_utc,
+              {_fmt_broker("min(time_broker)", tz)} AS min_time_broker,
+              {_fmt_broker("max(time_broker)", tz)} AS max_time_broker
             FROM read_parquet(?)
             """,
             [glob],
@@ -271,12 +294,13 @@ def list_ticks(
         [glob, *params],
     ) or {"total": 0}
 
+    tz = broker_tz_name(settings)
     rows = db.query(
         f"""
         SELECT
           timestamp_ms,
-          cast(time_utc AS VARCHAR) AS time_utc,
-          cast(time_broker AS VARCHAR) AS time_broker,
+          {_fmt_utc("time_utc")} AS time_utc,
+          {_fmt_broker("time_broker", tz)} AS time_broker,
           side,
           price,
           symbol
