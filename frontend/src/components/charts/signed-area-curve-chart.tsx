@@ -3,6 +3,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ReferenceArea,
   ReferenceDot,
   ReferenceLine,
   XAxis,
@@ -25,6 +26,13 @@ export type ExtremumDot = {
   pnl: number
 }
 
+export type SessionBand = {
+  start: number
+  end: number
+  label: string
+  color: string
+}
+
 export type SignedAreaCurveChartProps = {
   data: CurvePoint[]
   valueLabel?: string
@@ -40,8 +48,12 @@ export type SignedAreaCurveChartProps = {
   }
   /** mt5 Precise Equity uses monotone */
   curveType?: "linear" | "monotone" | "stepAfter"
+  /** Background session bands (e.g. Sydney/Tokyo vs London/NY) */
+  sessionBands?: SessionBand[]
   timeZone?: string
   formatValue?: (n: number) => string
+  /** Optional fixed X-axis domain in ms. Falls back to data min/max. */
+  domain?: [number, number]
 }
 
 const COLORS = {
@@ -73,8 +85,10 @@ export function SignedAreaCurveChart({
   showExtremumDots = true,
   extremumDots,
   curveType = "monotone",
+  sessionBands,
   timeZone = "Europe/Bucharest",
   formatValue = defaultFormatUsd,
+  domain,
 }: SignedAreaCurveChartProps) {
   const positiveGradientId = `pos-${useId().replace(/:/g, "")}`
   const negativeGradientId = `neg-${useId().replace(/:/g, "")}`
@@ -114,20 +128,65 @@ export function SignedAreaCurveChart({
     displayData.length > 0 ? displayData[displayData.length - 1].pnl : 0
 
   const xDomain = useMemo((): [number, number] => {
+    if (domain) return domain
     if (displayData.length === 0) return [0, 1]
     return [
       Math.min(...displayData.map((d) => d.time)),
       Math.max(...displayData.map((d) => d.time)),
     ]
-  }, [displayData])
+  }, [displayData, domain])
 
   const ticks = useMemo(() => {
     if (displayData.length === 0) return []
     const [min, max] = xDomain
     const span = max - min || 1
+    const MS_PER_HOUR = 60 * 60 * 1000
+    // For a fixed 24h calendar-day domain, pin ticks to 00:00 / 06:00 / 12:00 / 18:00 / 24:00
+    // so every trade card aligns regardless of when the trade itself opened.
+    if (
+      domain &&
+      Math.abs(span - 24 * MS_PER_HOUR) < MS_PER_HOUR
+    ) {
+      return [
+        min,
+        min + 6 * MS_PER_HOUR,
+        min + 12 * MS_PER_HOUR,
+        min + 18 * MS_PER_HOUR,
+        max,
+      ]
+    }
     const step = span / 4
     return [min, min + step, min + 2 * step, min + 3 * step, max]
-  }, [displayData, xDomain])
+  }, [displayData, xDomain, domain])
+
+  const xAxisFormatter = useMemo(() => {
+    const [min, max] = xDomain
+    const spanMs = max - min
+    const spanHours = spanMs / (1000 * 60 * 60)
+    if (spanHours <= 24) {
+      return (value: number) =>
+        new Date(value).toLocaleTimeString("en-US", {
+          hour: "numeric",
+          minute: "2-digit",
+          timeZone,
+        })
+    }
+    if (spanHours <= 24 * 7) {
+      return (value: number) =>
+        new Date(value).toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          timeZone,
+        })
+    }
+    return (value: number) =>
+      new Date(value).toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone,
+      })
+  }, [xDomain, timeZone])
 
   const markers = useMemo(() => {
     if (!showExtremumDots || displayData.length === 0) {
@@ -167,9 +226,15 @@ export function SignedAreaCurveChart({
       config={{
         pnl: { label: valueLabel, color: COLORS.green },
       }}
-      className={cn("aspect-auto h-48 w-full justify-center", className)}
+      className={cn(
+        "aspect-auto w-full justify-center",
+        className ?? "h-48",
+      )}
     >
-      <AreaChart data={displayData}>
+      <AreaChart
+        data={displayData}
+        margin={{ top: 8, right: 4, left: 8, bottom: 2 }}
+      >
         <defs>
           <linearGradient id={positiveGradientId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="5%" stopColor={COLORS.green} stopOpacity={0.4} />
@@ -180,9 +245,19 @@ export function SignedAreaCurveChart({
             <stop offset="95%" stopColor={COLORS.red} stopOpacity={0} />
           </linearGradient>
         </defs>
+        {sessionBands?.map((band) => (
+          <ReferenceArea
+            key={`${band.label}-${band.start}`}
+            x1={band.start}
+            x2={band.end}
+            fill={band.color}
+            fillOpacity={0.12}
+            strokeOpacity={0}
+            ifOverflow="hidden"
+          />
+        ))}
         <CartesianGrid
-          vertical={true}
-          strokeDasharray="3 3"
+          vertical={false}
           horizontal={false}
           strokeOpacity={1}
           stroke={COLORS.grid}
@@ -191,19 +266,34 @@ export function SignedAreaCurveChart({
           dataKey="time"
           domain={xDomain}
           type="number"
-          tickFormatter={(value) =>
-            new Date(value).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              timeZone,
-            })
-          }
-          tick={{ fontSize: 10, fill: COLORS.tick }}
+          allowDataOverflow={Boolean(domain)}
+          tickFormatter={xAxisFormatter}
           axisLine={false}
           tickLine={false}
           minTickGap={30}
           ticks={ticks}
           interval={0}
+          tick={(props) => {
+            const { x, y, payload, index } = props as {
+              x: number
+              y: number
+              payload: { value: number }
+              index: number
+            }
+            const isFirst = index === 0
+            const isLast = index === ticks.length - 1
+            return (
+              <text
+                x={x}
+                y={y + 10}
+                textAnchor={isFirst ? "start" : isLast ? "end" : "middle"}
+                fill={COLORS.tick}
+                fontSize={10}
+              >
+                {xAxisFormatter(payload.value)}
+              </text>
+            )
+          }}
         />
         <YAxis
           domain={["auto", "auto"]}
@@ -237,6 +327,9 @@ export function SignedAreaCurveChart({
               | undefined
             if (!point || point.time == null || point.pnl == null) return null
             const pnl = point.pnl
+            const session = sessionBands?.find(
+              (b) => point.time! >= b.start && point.time! < b.end,
+            )
             return (
               <div className="rounded-lg border bg-background p-3 shadow-lg">
                 <div className="space-y-2">
@@ -272,6 +365,20 @@ export function SignedAreaCurveChart({
                         </div>
                       ),
                     )}
+                  {session ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span
+                        className="size-2 shrink-0 rounded-sm"
+                        style={{ backgroundColor: session.color }}
+                      />
+                      <span>
+                        Session:{" "}
+                        <span className="font-medium text-foreground/90">
+                          {session.label}
+                        </span>
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )
@@ -291,7 +398,6 @@ export function SignedAreaCurveChart({
           strokeWidth={2}
           fill={`url(#${positiveGradientId})`}
           fillOpacity={0.4}
-          baseLine={0}
           isAnimationActive={false}
           dot={false}
           activeDot={{ r: 4, strokeWidth: 0 }}
@@ -303,7 +409,6 @@ export function SignedAreaCurveChart({
           strokeWidth={2}
           fill={`url(#${negativeGradientId})`}
           fillOpacity={0.4}
-          baseLine={0}
           isAnimationActive={false}
           dot={false}
           activeDot={{ r: 4, strokeWidth: 0 }}
@@ -317,7 +422,6 @@ export function SignedAreaCurveChart({
             stroke="#fff"
             strokeWidth={1}
             ifOverflow="extendDomain"
-            isFront
           />
         ) : null}
         {markers.drawdown ? (
@@ -329,7 +433,6 @@ export function SignedAreaCurveChart({
             stroke="#fff"
             strokeWidth={1}
             ifOverflow="extendDomain"
-            isFront
           />
         ) : null}
       </AreaChart>

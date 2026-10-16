@@ -148,6 +148,42 @@ class SideSummary(BaseModel):
     profit_factor: float | None
 
 
+class TradeExtremum(BaseModel):
+    trade_id: int
+    pnl_usd: float
+
+
+class SideAnalytics(BaseModel):
+    avg_pnl_usd: float
+    biggest_win_usd: float
+    biggest_loss_usd: float
+
+
+class PeriodPnl(BaseModel):
+    period: str
+    pnl_usd: float
+    wins: int
+    losses: int
+
+
+class SimAnalytics(BaseModel):
+    avg_pnl_usd: float
+    avg_win_usd: float
+    avg_loss_usd: float
+    best_trade: TradeExtremum | None = None
+    worst_trade: TradeExtremum | None = None
+    by_side: dict[str, SideAnalytics] = Field(default_factory=dict)
+    shortest_win_ms: int | None = None
+    shortest_loss_ms: int | None = None
+    avg_win_duration_ms: int | None = None
+    avg_loss_duration_ms: int | None = None
+    max_consecutive_wins: int
+    max_consecutive_losses: int
+    monthly_pnls: list[PeriodPnl] = Field(default_factory=list)
+    daily_pnls: list[PeriodPnl] = Field(default_factory=list)
+    session_pnls: dict[str, float] = Field(default_factory=dict)
+
+
 class SimSummary(BaseModel):
     trades: int
     filled: int
@@ -164,6 +200,7 @@ class SimSummary(BaseModel):
     ending_equity: float
     return_pct: float
     by_side: dict[str, SideSummary] = Field(default_factory=dict)
+    analytics: SimAnalytics | None = None
 
 
 class SimSettings(BaseModel):

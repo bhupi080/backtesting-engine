@@ -172,6 +172,26 @@ export type SimulateResponse = {
         profit_factor: number | null
       }
     }
+    analytics?: {
+      avg_pnl_usd: number
+      avg_win_usd: number
+      avg_loss_usd: number
+      best_trade: { trade_id: number; pnl_usd: number } | null
+      worst_trade: { trade_id: number; pnl_usd: number } | null
+      by_side: {
+        long?: { avg_pnl_usd: number; biggest_win_usd: number; biggest_loss_usd: number }
+        short?: { avg_pnl_usd: number; biggest_win_usd: number; biggest_loss_usd: number }
+      }
+      shortest_win_ms: number | null
+      shortest_loss_ms: number | null
+      avg_win_duration_ms: number | null
+      avg_loss_duration_ms: number | null
+      max_consecutive_wins: number
+      max_consecutive_losses: number
+      monthly_pnls: { period: string; pnl_usd: number; wins: number; losses: number }[]
+      daily_pnls: { period: string; pnl_usd: number; wins: number; losses: number }[]
+      session_pnls: Record<string, number>
+    }
   }
   settings?: {
     lots: number

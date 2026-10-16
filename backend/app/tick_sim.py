@@ -537,6 +537,155 @@ def compute_excursions(
     return excursions, paths
 
 
+def _compute_analytics(
+    filled_trades: list[dict[str, Any]],
+    *,
+    sim_total: float,
+    wins: int,
+    losses: int,
+    gross_win: float,
+    gross_loss: float,
+    settings: Settings,
+) -> dict[str, Any]:
+    """Derived statistics: streaks, duration, monthly/daily/session breakdowns."""
+    filled = len(filled_trades)
+    closed = wins + losses
+
+    sorted_trades = sorted(filled_trades, key=lambda t: t["trade_id"])
+    nets = [t["net"] for t in sorted_trades]
+
+    best = max(sorted_trades, key=lambda t: t["net"]) if sorted_trades else None
+    worst = min(sorted_trades, key=lambda t: t["net"]) if sorted_trades else None
+
+    # Duration stats (ms)
+    win_durations: list[int] = []
+    loss_durations: list[int] = []
+    for t in sorted_trades:
+        entry = t.get("entry_ms")
+        exit_ = t.get("exit_ms")
+        if entry is None or exit_ is None:
+            continue
+        dur = int(exit_) - int(entry)
+        if dur <= 0:
+            continue
+        if t["net"] >= 0:
+            win_durations.append(dur)
+        else:
+            loss_durations.append(dur)
+
+    def _avg(durations: list[int]) -> int | None:
+        if not durations:
+            return None
+        return int(sum(durations) / len(durations))
+
+    # Streaks
+    max_win_streak = cur_win = 0
+    max_loss_streak = cur_loss = 0
+    for net in nets:
+        if net >= 0:
+            cur_win += 1
+            cur_loss = 0
+            max_win_streak = max(max_win_streak, cur_win)
+        else:
+            cur_loss += 1
+            cur_win = 0
+            max_loss_streak = max(max_loss_streak, cur_loss)
+
+    # Period and session grouping
+    monthly: dict[str, dict[str, Any]] = {}
+    daily: dict[str, dict[str, Any]] = {}
+    sessions: dict[str, float] = {"sydney_tokyo": 0.0, "london_newyork": 0.0}
+    tz = ZoneInfo(settings.tv_trades_tz)
+
+    for t in sorted_trades:
+        exit_time = t.get("exit_time")
+        if not exit_time:
+            continue
+        dt = _parse_iso(exit_time)
+        if dt is None:
+            continue
+        net = float(t["net"])
+        key_month = dt.strftime("%Y-%m")
+        key_day = dt.strftime("%Y-%m-%d")
+
+        for bucket, key in ((monthly, key_month), (daily, key_day)):
+            if key not in bucket:
+                bucket[key] = {"period": key, "pnl_usd": 0.0, "wins": 0, "losses": 0}
+            bucket[key]["pnl_usd"] += net
+            if net >= 0:
+                bucket[key]["wins"] += 1
+            else:
+                bucket[key]["losses"] += 1
+
+        local = dt.astimezone(tz)
+        hour = local.hour
+        # Sydney/Tokyo 22:00-07:59, London/NY 08:00-21:59 (broker/TV TZ)
+        if hour >= 22 or hour < 8:
+            sessions["sydney_tokyo"] += net
+        else:
+            sessions["london_newyork"] += net
+
+    # Side analytics
+    side_analytics: dict[str, dict[str, Any]] = {}
+    for side in ("long", "short"):
+        side_trades = [t for t in sorted_trades if t["side"] == side]
+        if not side_trades:
+            side_analytics[side] = {
+                "avg_pnl_usd": 0.0,
+                "biggest_win_usd": 0.0,
+                "biggest_loss_usd": 0.0,
+            }
+            continue
+        side_pnls = [t["net"] for t in side_trades]
+        side_analytics[side] = {
+            "avg_pnl_usd": round(sum(side_pnls) / len(side_pnls), 2),
+            "biggest_win_usd": round(max(side_pnls), 2),
+            "biggest_loss_usd": round(min(side_pnls), 2),
+        }
+
+    return {
+        "avg_pnl_usd": round(sim_total / filled, 2) if filled else 0.0,
+        "avg_win_usd": round(gross_win / wins, 2) if wins else 0.0,
+        "avg_loss_usd": round(-(gross_loss / losses), 2) if losses else 0.0,
+        "best_trade": (
+            {"trade_id": int(best["trade_id"]), "pnl_usd": round(best["net"], 2)}
+            if best
+            else None
+        ),
+        "worst_trade": (
+            {"trade_id": int(worst["trade_id"]), "pnl_usd": round(worst["net"], 2)}
+            if worst
+            else None
+        ),
+        "by_side": side_analytics,
+        "shortest_win_ms": min(win_durations) if win_durations else None,
+        "shortest_loss_ms": min(loss_durations) if loss_durations else None,
+        "avg_win_duration_ms": _avg(win_durations),
+        "avg_loss_duration_ms": _avg(loss_durations),
+        "max_consecutive_wins": max_win_streak,
+        "max_consecutive_losses": max_loss_streak,
+        "monthly_pnls": [
+            {
+                "period": k,
+                "pnl_usd": round(v["pnl_usd"], 2),
+                "wins": v["wins"],
+                "losses": v["losses"],
+            }
+            for k, v in sorted(monthly.items())
+        ],
+        "daily_pnls": [
+            {
+                "period": k,
+                "pnl_usd": round(v["pnl_usd"], 2),
+                "wins": v["wins"],
+                "losses": v["losses"],
+            }
+            for k, v in sorted(daily.items())
+        ],
+        "session_pnls": {k: round(v, 2) for k, v in sessions.items()},
+    }
+
+
 def apply_sizing(
     symbol: str,
     fills: list[TradeFill],
@@ -580,6 +729,8 @@ def apply_sizing(
             "gross_loss": 0.0,
         },
     }
+
+    filled_trades: list[dict[str, Any]] = []
 
     for fill in fills:
         row = asdict(fill)
@@ -683,6 +834,18 @@ def apply_sizing(
         row["size"] = lots * contract
         trades.append(row)
 
+        # Keep a lightweight analytics record (with original ms timestamps)
+        filled_trades.append(
+            {
+                "trade_id": fill.trade_id,
+                "side": fill.side,
+                "net": net,
+                "entry_ms": fill.entry_fill_ms,
+                "exit_ms": fill.exit_fill_ms,
+                "exit_time": fill.fill_exit_time,
+            }
+        )
+
         t_label = fill.tv_exit_time or fill.fill_exit_time or ""
         curve.append(
             {
@@ -749,6 +912,16 @@ def apply_sizing(
             "profit_factor": side_pf,
         }
 
+    analytics = _compute_analytics(
+        filled_trades,
+        sim_total=sim_total,
+        wins=wins,
+        losses=losses,
+        gross_win=gross_win,
+        gross_loss=gross_loss,
+        settings=settings,
+    )
+
     return {
         "symbol": symbol,
         "strategy_id": "",  # filled by caller
@@ -782,6 +955,7 @@ def apply_sizing(
                 "long": _side_summary("long"),
                 "short": _side_summary("short"),
             },
+            "analytics": analytics,
         },
         # Compat top-level fields
         "trade_count": len(fills),

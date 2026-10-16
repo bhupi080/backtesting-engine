@@ -1,22 +1,43 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Activity,
   ChevronDown,
-  PanelLeftClose,
-  PanelLeftOpen,
   Play,
   Search,
+  Settings2,
+  ZoomIn,
 } from "lucide-react"
 
-import { PreciseEquityCurveChart } from "@/components/charts"
+import {
+  EquityCurveZoomModal,
+  PreciseEquityCurveChart,
+  SessionLegend,
+  type EquityPoint,
+} from "@/components/charts"
 import { LoadingState } from "@/components/loading-state"
+import { SimOverviewPanel } from "@/components/sim-overview-panel"
 import { api, type StrategyInfo } from "@/lib/api"
 import { useFilters } from "@/lib/filters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 
@@ -28,6 +49,15 @@ type SymbolGroup = {
   symbol: string
   strategies: StrategyInfo[]
 }
+
+const TIMEZONES = [
+  { value: "UTC", label: "UTC" },
+  { value: "America/New_York", label: "New York" },
+  { value: "Europe/London", label: "London" },
+  { value: "Europe/Bucharest", label: "Bucharest" },
+  { value: "Asia/Tokyo", label: "Tokyo" },
+  { value: "Australia/Sydney", label: "Sydney" },
+]
 
 function formatUsd(n: number | null | undefined, digits = 2): string {
   if (n == null || Number.isNaN(n)) return "—"
@@ -69,6 +99,7 @@ function SimulatePage() {
   const [commission, setCommission] = useState(7)
   const [balance, setBalance] = useState(2000)
   const [chartTf, setChartTf] = useState(10)
+  const [timeZone, setTimeZone] = useState("Europe/Bucharest")
   const [runKey, setRunKey] = useState(0)
   /** Snapshot of inputs used for the last Run — typing does not re-fetch. */
   const [committed, setCommitted] = useState<{
@@ -79,8 +110,10 @@ function SimulatePage() {
     balance: number
     chartTf: number
   } | null>(null)
-  const [selectedTrade, setSelectedTrade] = useState<number | null>(null)
-  const [strategySidebarOpen, setStrategySidebarOpen] = useState(true)
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "analytics" | "trades" | "grid"
+  >("overview")
+  const [strategyPickerOpen, setStrategyPickerOpen] = useState(false)
 
   const strategiesQ = useQuery({
     queryKey: ["strategies"],
@@ -153,7 +186,6 @@ function SimulatePage() {
   })
 
   useEffect(() => {
-    setSelectedTrade(null)
     setRunKey(0)
     setCommitted(null)
   }, [applied.symbol, applied.strategyId])
@@ -181,44 +213,6 @@ function SimulatePage() {
     }))
   }, [simQ.data?.equity, startingBalance])
 
-  const tradeWiseEquity = useMemo(() => {
-    if (selectedTrade == null) return []
-    return simQ.data?.trade_equity?.[String(selectedTrade)] ?? []
-  }, [selectedTrade, simQ.data?.trade_equity])
-
-  const selectedRow = useMemo(() => {
-    if (selectedTrade == null) return null
-    return simQ.data?.trades.find((t) => t.trade_id === selectedTrade) ?? null
-  }, [selectedTrade, simQ.data?.trades])
-
-  const tradeExtremum = useMemo(() => {
-    if (!selectedRow) return undefined
-    let maxRunupTime: string | null = null
-    let maxDrawdownTime: string | null = null
-    for (const p of tradeWiseEquity) {
-      if (
-        selectedRow.max_runup_usd != null &&
-        maxRunupTime == null &&
-        Math.abs(p.equity - selectedRow.max_runup_usd) < 0.005
-      ) {
-        maxRunupTime = p.t
-      }
-      if (
-        selectedRow.max_drawdown_usd != null &&
-        maxDrawdownTime == null &&
-        Math.abs(p.equity - selectedRow.max_drawdown_usd) < 0.005
-      ) {
-        maxDrawdownTime = p.t
-      }
-    }
-    return {
-      maxRunup: selectedRow.max_runup_usd,
-      maxDrawdown: selectedRow.max_drawdown_usd,
-      maxRunupTime,
-      maxDrawdownTime,
-    }
-  }, [selectedRow, tradeWiseEquity])
-
   function isExpanded(symbol: string): boolean {
     if (query.trim()) return true
     if (expanded[symbol] != null) return expanded[symbol]
@@ -231,7 +225,6 @@ function SimulatePage() {
 
   function runSim() {
     if (!applied.symbol || !applied.strategyId) return
-    setSelectedTrade(null)
     setCommitted({
       symbol: applied.symbol,
       strategyId: applied.strategyId,
@@ -249,229 +242,261 @@ function SimulatePage() {
 
   return (
     <div className="flex h-[calc(100vh-3.75rem)] min-h-[28rem] flex-col gap-2">
-      <div
-        className={cn(
-          "grid min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-background/60",
-          strategySidebarOpen
-            ? "lg:grid-cols-[15rem_minmax(0,1fr)]"
-            : "lg:grid-cols-[2.5rem_minmax(0,1fr)]",
-        )}
-      >
-        <aside className="flex min-h-0 flex-col border-b border-border lg:border-r lg:border-b-0">
-          {strategySidebarOpen ? (
-            <>
-              <div className="flex h-12 shrink-0 items-center gap-1.5 border-b border-border px-2.5">
-                <div className="relative min-w-0 flex-1">
-                  <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search…"
-                    className="h-8 bg-muted/40 pl-7"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="size-8 shrink-0 text-muted-foreground"
-                  title="Hide strategies"
-                  onClick={() => setStrategySidebarOpen(false)}
-                >
-                  <PanelLeftClose className="size-4" />
-                </Button>
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto">
-                {loading ? (
-                  <LoadingState
-                    className="py-10"
-                    size="sm"
-                    message="Loading strategies…"
-                  />
-                ) : groups.length === 0 ? (
-                  <p className="p-4 text-xs text-muted-foreground">No matches.</p>
-                ) : (
-                  <ul className="space-y-0.5 p-1">
-                    {groups.map((group) => {
-                      const open = isExpanded(group.symbol)
-                      return (
-                        <li key={group.symbol}>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setExpanded((prev) => ({
-                                ...prev,
-                                [group.symbol]: !open,
-                              }))
-                            }
-                            className={cn(
-                              "flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/50",
-                              group.symbol === applied.symbol && "bg-muted/30",
-                            )}
-                          >
-                            <ChevronDown
-                              className={cn(
-                                "size-3.5 shrink-0 text-muted-foreground transition-transform",
-                                !open && "-rotate-90",
-                              )}
-                            />
-                            <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold tracking-tight">
-                              {group.symbol}
-                            </span>
-                          </button>
-                          {open ? (
-                            <ul className="mt-0.5 mb-1 ml-2 space-y-0.5 border-l border-border/60 pl-2">
-                              {group.strategies.map((s) => {
-                                const active =
-                                  s.symbol === applied.symbol &&
-                                  s.strategy_id === applied.strategyId
-                                return (
-                                  <li key={strategyKey(s)}>
-                                    <button
-                                      type="button"
-                                      onClick={() => selectStrategy(s)}
-                                      className={cn(
-                                        "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                                        active
-                                          ? "bg-rose-500/10 text-foreground ring-1 ring-rose-500/25"
-                                          : "hover:bg-muted/50",
-                                      )}
-                                    >
-                                      <span
-                                        className={cn(
-                                          "size-1.5 shrink-0 rounded-full",
-                                          s.trade_count > 0
-                                            ? "bg-emerald-500"
-                                            : "bg-muted-foreground/30",
-                                        )}
-                                      />
-                                      <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
-                                        {s.strategy_id}
-                                      </span>
-                                      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-                                        {formatCompact(s.trade_count)}
-                                      </span>
-                                    </button>
-                                  </li>
-                                )
-                              })}
-                            </ul>
-                          ) : null}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="flex h-12 shrink-0 items-center justify-center border-b border-border">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                className="size-8 text-muted-foreground"
-                title="Show strategies"
-                onClick={() => setStrategySidebarOpen(true)}
+      <div className="grid min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-background/60 lg:grid-cols-[16rem_minmax(0,1fr)]">
+
+        <aside className="flex min-h-0 flex-col border-b border-border bg-muted/20 lg:border-r lg:border-b-0">
+          <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
+            {/* Strategy picker */}
+            <div>
+              <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Strategy
+              </p>
+              <Dialog
+                open={strategyPickerOpen}
+                onOpenChange={setStrategyPickerOpen}
               >
-                <PanelLeftOpen className="size-4" />
-              </Button>
+                <DialogTrigger
+                  render={
+                    <button
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 rounded-md border bg-background px-2.5 py-2 text-left transition-colors hover:bg-muted/50"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-mono text-xs font-semibold">
+                          {applied.symbol || "Symbol"}
+                        </p>
+                        <p className="truncate text-[11px] text-muted-foreground">
+                          {applied.strategyId || "Select a strategy"}
+                        </p>
+                      </div>
+                      <Settings2 className="size-3.5 shrink-0 text-muted-foreground" />
+                    </button>
+                  }
+                />
+                <DialogContent className="max-h-[80vh] max-w-md overflow-hidden p-0">
+                  <DialogHeader className="px-5 pt-5 pb-2">
+                    <DialogTitle>Select strategy</DialogTitle>
+                    <DialogDescription>
+                      Choose a symbol and strategy to simulate.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="px-5 pb-4">
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        placeholder="Search symbol or strategy…"
+                        className="h-9 bg-muted/40 pl-8"
+                      />
+                    </div>
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">
+                    {loading ? (
+                      <LoadingState
+                        className="py-8"
+                        size="sm"
+                        message="Loading strategies…"
+                      />
+                    ) : groups.length === 0 ? (
+                      <p className="text-xs text-muted-foreground">No matches.</p>
+                    ) : (
+                      <ul className="space-y-0.5">
+                        {groups.map((group) => {
+                          const open = isExpanded(group.symbol)
+                          return (
+                            <li key={group.symbol}>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpanded((prev) => ({
+                                    ...prev,
+                                    [group.symbol]: !open,
+                                  }))
+                                }
+                                className={cn(
+                                  "flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted/50",
+                                  group.symbol === applied.symbol && "bg-muted/30",
+                                )}
+                              >
+                                <ChevronDown
+                                  className={cn(
+                                    "size-3.5 shrink-0 text-muted-foreground transition-transform",
+                                    !open && "-rotate-90",
+                                  )}
+                                />
+                                <span className="min-w-0 flex-1 truncate font-mono text-[12px] font-semibold tracking-tight">
+                                  {group.symbol}
+                                </span>
+                              </button>
+                              {open ? (
+                                <ul className="mt-0.5 mb-1 ml-2 space-y-0.5 border-l border-border/60 pl-2">
+                                  {group.strategies.map((s) => {
+                                    const active =
+                                      s.symbol === applied.symbol &&
+                                      s.strategy_id === applied.strategyId
+                                    return (
+                                      <li key={strategyKey(s)}>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            selectStrategy(s)
+                                            setStrategyPickerOpen(false)
+                                          }}
+                                          className={cn(
+                                            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                                            active
+                                              ? "bg-rose-500/10 text-foreground ring-1 ring-rose-500/25"
+                                              : "hover:bg-muted/50",
+                                          )}
+                                        >
+                                          <span
+                                            className={cn(
+                                              "size-1.5 shrink-0 rounded-full",
+                                              s.trade_count > 0
+                                                ? "bg-emerald-500"
+                                                : "bg-muted-foreground/30",
+                                            )}
+                                          />
+                                          <span className="min-w-0 flex-1 truncate text-[12px] font-medium">
+                                            {s.strategy_id}
+                                          </span>
+                                          <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                                            {formatCompact(s.trade_count)}
+                                          </span>
+                                        </button>
+                                      </li>
+                                    )
+                                  })}
+                                </ul>
+                              ) : null}
+                            </li>
+                          )
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
-          )}
+
+            {/* Settings */}
+            <div className="space-y-2.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Settings
+              </p>
+              <Field
+                label="Lots"
+                value={lots}
+                onChange={setLots}
+                step={0.01}
+                min={0.01}
+                className="w-full"
+              />
+              <Field
+                label="Commission / lot"
+                value={commission}
+                onChange={setCommission}
+                step={0.1}
+                min={0}
+                className="w-full"
+              />
+              <Field
+                label="Balance"
+                value={balance}
+                onChange={setBalance}
+                step={100}
+                min={100}
+                className="w-full"
+              />
+              <Field
+                label="Chart TF (min)"
+                value={chartTf}
+                onChange={setChartTf}
+                step={1}
+                min={0}
+                className="w-full"
+              />
+              <div className="space-y-1">
+                <label className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Time zone
+                </label>
+                <Select
+                  value={timeZone}
+                  onValueChange={(v) => v && setTimeZone(v)}
+                >
+                  <SelectTrigger size="sm" className="h-9 w-full text-[12px]">
+                    <SelectValue placeholder="Time zone">
+                      {TIMEZONES.find((t) => t.value === timeZone)?.label ??
+                        timeZone}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {TIMEZONES.map((tz) => (
+                      <SelectItem key={tz.value} value={tz.value}>
+                        {tz.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <Button
+              className="mt-1 gap-1.5 bg-rose-600 text-white hover:bg-rose-600/90"
+              disabled={!hasSelection || simQ.isFetching}
+              onClick={runSim}
+            >
+              {simQ.isFetching ? (
+                <Spinner className="size-3.5" />
+              ) : (
+                <Play className="size-3.5" />
+              )}
+              Run
+            </Button>
+
+            <div className="mt-auto">
+              {hasRun && simQ.data?.meta?.rule ? (
+                <p className="text-[11px] text-muted-foreground">
+                  {simQ.data.meta.rule}
+                  {settingsDirty ? (
+                    <span className="mt-0.5 block text-amber-600 dark:text-amber-400">
+                      Settings changed — click Run to re-simulate
+                    </span>
+                  ) : null}
+                </p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">
+                  {hasSelection
+                    ? `Ready · ${applied.symbol} / ${applied.strategyId}`
+                    : "Pick a symbol and strategy, then click Run"}
+                </p>
+              )}
+            </div>
+          </div>
         </aside>
 
         <section className="flex min-h-0 flex-col">
-          <div className="shrink-0 space-y-2 border-b border-border px-3 py-2.5">
-            <div className="relative flex flex-wrap items-center gap-3">
-              <div className="flex min-w-0 flex-1 flex-wrap items-end gap-2">
-                {!strategySidebarOpen ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-9 gap-1.5"
-                    title="Show strategies"
-                    onClick={() => setStrategySidebarOpen(true)}
-                  >
-                    <PanelLeftOpen className="size-3.5" />
-                    Strategies
-                  </Button>
-                ) : null}
-                <Field
-                  label="Lots"
-                  value={lots}
-                  onChange={setLots}
-                  step={0.01}
-                  min={0.01}
-                />
-                <Field
-                  label="Commission / lot"
-                  value={commission}
-                  onChange={setCommission}
-                  step={0.1}
-                  min={0}
-                />
-                <Field
-                  label="Balance"
-                  value={balance}
-                  onChange={setBalance}
-                  step={100}
-                  min={100}
-                />
-                <Field
-                  label="Chart TF (min)"
-                  value={chartTf}
-                  onChange={setChartTf}
-                  step={1}
-                  min={0}
-                />
-                <Button
-                  size="sm"
-                  className="h-9 gap-1.5 bg-rose-600 px-4 text-white hover:bg-rose-600/90"
-                  disabled={!hasSelection || simQ.isFetching}
-                  onClick={runSim}
+          {hasSelection ? (
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm font-semibold">
+                  {applied.symbol}
+                </span>
+                <Badge
+                  variant="secondary"
+                  className="h-5 text-[10px] text-rose-700 dark:text-rose-300"
                 >
-                  {simQ.isFetching ? (
-                    <Spinner className="size-3.5" />
-                  ) : (
-                    <Play className="size-3.5" />
-                  )}
-                  Run
-                </Button>
+                  {applied.strategyId}
+                </Badge>
               </div>
-              {hasSelection ? (
-                <div className="pointer-events-none absolute inset-0 hidden items-center justify-center sm:flex">
-                  <div className="pointer-events-auto flex items-center gap-2 rounded-md bg-background/80 px-2 py-1 backdrop-blur-sm">
-                    <span className="font-mono text-sm font-semibold">
-                      {applied.symbol}
-                    </span>
-                    <Badge
-                      variant="secondary"
-                      className="h-5 text-[10px] text-rose-700 dark:text-rose-300"
-                    >
-                      {applied.strategyId}
-                    </Badge>
-                  </div>
-                </div>
+              {settingsDirty ? (
+                <span className="text-[11px] text-amber-600 dark:text-amber-400">
+                  Settings changed — click Run to re-simulate
+                </span>
               ) : null}
             </div>
-            {hasRun && simQ.data?.meta?.rule ? (
-              <p className="text-[11px] text-muted-foreground">
-                {simQ.data.meta.rule}
-                {settingsDirty ? (
-                  <span className="ml-2 text-amber-600 dark:text-amber-400">
-                    · settings changed — click Run to re-simulate
-                  </span>
-                ) : null}
-              </p>
-            ) : (
-              <p className="text-[11px] text-muted-foreground">
-                {hasSelection
-                  ? `Ready · ${applied.symbol} / ${applied.strategyId} · click Run to simulate`
-                  : "Pick a symbol and strategy in the list, then click Run"}
-              </p>
-            )}
-          </div>
+          ) : null}
 
           {!hasSelection ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
@@ -508,76 +533,76 @@ function SimulatePage() {
                   </p>
                 </div>
               ) : simQ.data && summary ? (
-                <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-                  <SimKpiPanel summary={summary} />
-
-                  <div className="shrink-0 border-b border-border px-3 py-2.5">
-                    <p className="mb-1.5 text-[11px] text-muted-foreground">
-                      Account equity · ending $
-                      {formatUsd(summary.ending_equity)}
-                      {!selectedRow ? (
-                        <span className="text-muted-foreground/80">
-                          {" "}
-                          · click a row below for trade-wise PnL
-                        </span>
-                      ) : null}
-                    </p>
-                    <PreciseEquityCurveChart
-                      equity={chartEquity}
-                      emptyMessage="No equity points (no tick fills)"
-                      showExtremumStats
-                    />
-                    {selectedRow ? (
-                      <div className="mt-2.5 border-t border-border pt-2.5">
-                        <p className="mb-1.5 text-[12px] text-muted-foreground">
-                          Trade-wise ·{" "}
-                          <span className="font-semibold text-foreground">
-                            #{selectedRow.trade_id}
-                          </span>{" "}
-                          {selectedRow.side}
-                          {" · "}
-                          sim{" "}
-                          <span className={pnlClass(selectedRow.net_pnl_usd)}>
-                            ${formatUsd(selectedRow.net_pnl_usd)}
-                          </span>
-                          <button
-                            type="button"
-                            className="ml-2 text-sky-500 underline-offset-2 hover:underline"
-                            onClick={() => setSelectedTrade(null)}
-                          >
-                            Clear
-                          </button>
-                        </p>
-                        <PreciseEquityCurveChart
-                          equity={tradeWiseEquity}
-                          emptyMessage="No tick path for this trade"
-                          showExtremumStats
-                          extremum={tradeExtremum}
-                        />
-                      </div>
-                    ) : null}
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                  <div className="flex shrink-0 border-b border-border bg-muted/40 px-2">
+                    {[
+                      { id: "overview", label: "Overview" },
+                      { id: "analytics", label: "Analytics" },
+                      { id: "trades", label: "Trades" },
+                      { id: "grid", label: "Trade equity curve" },
+                    ].map((tab) => (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                        className={cn(
+                          "relative px-3 py-2 text-[11px] font-medium tracking-wide transition-colors",
+                          activeTab === tab.id
+                            ? "text-foreground"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                      >
+                        {tab.label}
+                        {activeTab === tab.id ? (
+                          <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded-t bg-rose-500" />
+                        ) : null}
+                      </button>
+                    ))}
                   </div>
 
-                  <div className="flex min-h-[24rem] flex-1 flex-col pb-10">
-                    <div className="sticky top-0 z-10 flex shrink-0 items-end justify-between gap-3 border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur-sm">
-                      <div>
-                        <p className="text-sm font-medium tracking-tight">
-                          Simulated trades
-                        </p>
-                        <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
-                          {summary.filled} filled · {summary.skipped} skipped
-                        </p>
-                      </div>
-                    </div>
-                    <div className="min-h-0 flex-1">
-                      <SimTradesTable
-                        rows={simQ.data.trades}
-                        selectedId={selectedTrade}
-                        onSelect={(id) =>
-                          setSelectedTrade((cur) => (cur === id ? null : id))
-                        }
+                  <div className="min-h-0 flex-1 overflow-y-auto">
+                    {activeTab === "overview" ? (
+                      <SimOverviewPanel
+                        summary={summary}
+                        equity={chartEquity}
+                        trades={simQ.data.trades}
+                        timeZone={timeZone}
                       />
-                    </div>
+                    ) : activeTab === "analytics" ? (
+                      <SimAnalyticsPanel summary={summary} />
+                    ) : activeTab === "trades" ? (
+                      <div className="flex min-h-[24rem] flex-1 flex-col pb-10">
+                        <div className="sticky top-0 z-10 flex shrink-0 items-end justify-between gap-3 border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur-sm">
+                          <div>
+                            <p className="text-sm font-medium tracking-tight">
+                              Simulated trades
+                            </p>
+                            <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+                              {summary.filled} filled · {summary.skipped}{" "}
+                              skipped
+                            </p>
+                          </div>
+                        </div>
+                        <div className="min-h-0 flex-1">
+                          <SimTradesTable
+                            rows={simQ.data.trades}
+                            tradeEquity={simQ.data.trade_equity ?? {}}
+                            timeZone={timeZone}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex min-h-0 flex-1 flex-col">
+                        <SessionLegend timeZone={timeZone} />
+                        <div className="min-h-0 flex-1">
+                          <TradeWiseGrid
+                            tradeEquity={simQ.data.trade_equity ?? {}}
+                            trades={simQ.data.trades}
+                            timeZone={timeZone}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : null}
@@ -593,12 +618,14 @@ function Field({
   onChange,
   step,
   min,
+  className,
 }: {
   label: string
   value: number
   onChange: (n: number) => void
   step: number
   min: number
+  className?: string
 }) {
   return (
     <label className="flex flex-col gap-1">
@@ -611,241 +638,146 @@ function Field({
         min={min}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-9 w-[6.5rem] font-mono text-[12px]"
+        className={cn(
+          "h-9 w-[6.5rem] font-mono text-[12px]",
+          className,
+        )}
       />
     </label>
   )
 }
 
-type SimSummary = NonNullable<
-  Awaited<ReturnType<typeof api.simulate>>["summary"]
->
-
-function SimKpiPanel({ summary }: { summary: SimSummary }) {
-  const long = summary.by_side?.long
-  const short = summary.by_side?.short
-  const ddUsd = summary.max_drawdown_usd ?? 0
-  const closed = summary.wins + summary.losses
-  const pfLabel =
-    summary.profit_factor == null
-      ? "∞"
-      : summary.profit_factor.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 3,
-        })
-
-  return (
-    <div className="shrink-0 border-b border-border">
-      {/* Primary strip — TradingView-style: label + primary + secondary */}
-      <div className="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-4">
-        <KpiCell
-          label="Total PnL"
-          primary={
-            <span className={pnlClass(summary.sim_pnl_usd)}>
-              {formatPnl(summary.sim_pnl_usd)} USD
-            </span>
-          }
-          secondary={
-            <span className={pnlClass(summary.return_pct)}>
-              {formatPnl(summary.return_pct)}%
-            </span>
-          }
-        />
-        <KpiCell
-          label="Max drawdown"
-          primary={
-            <span className="text-rose-600 dark:text-rose-400">
-              {formatUsd(ddUsd)} USD
-            </span>
-          }
-          secondary={
-            <span className="text-muted-foreground">
-              {formatUsd(summary.max_drawdown_pct)}%
-            </span>
-          }
-        />
-        <KpiCell
-          label="Profitable trades"
-          primary={
-            <span>
-              {formatUsd(summary.win_rate * 100, 2)}%
-            </span>
-          }
-          secondary={
-            <span className="text-muted-foreground">
-              {summary.wins} / {closed || summary.filled}
-            </span>
-          }
-        />
-        <KpiCell
-          label="Profit factor"
-          primary={<span>{pfLabel}</span>}
-          secondary={
-            <span className="text-muted-foreground">
-              TV {formatPnl(summary.tv_pnl_usd)} · Δ{" "}
-              <span className={pnlClass(summary.pnl_diff_usd)}>
-                {formatPnl(summary.pnl_diff_usd)}
-              </span>
-            </span>
-          }
-        />
-      </div>
-
-      {/* Long vs Short comparison */}
-      <div className="grid gap-px bg-border sm:grid-cols-2">
-        <SideCompareCard
-          side="long"
-          filled={long?.filled ?? 0}
-          totalFilled={summary.filled}
-          sharePct={long?.share_pct ?? 0}
-          pnl={long?.pnl_usd ?? 0}
-          pnlSharePct={long?.pnl_share_pct ?? 0}
-          winRate={long?.win_rate ?? 0}
-          wins={long?.wins ?? 0}
-          losses={long?.losses ?? 0}
-          profitFactor={long?.profit_factor ?? null}
-        />
-        <SideCompareCard
-          side="short"
-          filled={short?.filled ?? 0}
-          totalFilled={summary.filled}
-          sharePct={short?.share_pct ?? 0}
-          pnl={short?.pnl_usd ?? 0}
-          pnlSharePct={short?.pnl_share_pct ?? 0}
-          winRate={short?.win_rate ?? 0}
-          wins={short?.wins ?? 0}
-          losses={short?.losses ?? 0}
-          profitFactor={short?.profit_factor ?? null}
-        />
-      </div>
-    </div>
-  )
+function msToLocalYmd(ms: number, timeZone: string): string {
+  return new Date(ms).toLocaleDateString("en-CA", { timeZone })
 }
 
-function KpiCell({
-  label,
-  primary,
-  secondary,
-}: {
-  label: string
-  primary: ReactNode
-  secondary?: ReactNode
-}) {
-  return (
-    <div className="bg-background px-4 py-3">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="font-mono text-[15px] font-semibold tracking-tight tabular-nums">
-          {primary}
-        </span>
-        {secondary ? (
-          <span className="font-mono text-[12px] tabular-nums">{secondary}</span>
-        ) : null}
-      </div>
-    </div>
-  )
+function getTimezoneOffsetMs(ms: number, timeZone: string): number {
+  const part = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "longOffset",
+  })
+    .formatToParts(new Date(ms))
+    .find((p) => p.type === "timeZoneName")?.value
+  if (!part) return 0
+  const m = part.match(/GMT([+-])(\d{2}):(\d{2})/)
+  if (!m) return 0
+  const sign = m[1] === "+" ? 1 : -1
+  const hours = Number(m[2])
+  const mins = Number(m[3])
+  return sign * (hours * 60 + mins) * 60 * 1000
 }
 
-function SideCompareCard({
-  side,
-  filled,
-  totalFilled,
-  sharePct,
-  pnl,
-  pnlSharePct,
-  winRate,
-  wins,
-  losses,
-  profitFactor,
-}: {
-  side: "long" | "short"
-  filled: number
-  totalFilled: number
-  sharePct: number
-  pnl: number
-  pnlSharePct: number
-  winRate: number
-  wins: number
-  losses: number
-  profitFactor: number | null
-}) {
-  const isLong = side === "long"
-  const pf =
-    profitFactor == null
-      ? "∞"
-      : profitFactor.toLocaleString(undefined, {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 3,
-        })
-  const closed = wins + losses
-  const barPct = Math.min(100, Math.max(0, sharePct))
+function localYmdToMs(ymd: string, hour: number, timeZone: string): number {
+  const [y, m, d] = ymd.split("-").map(Number)
+  const naive = Date.UTC(y, m - 1, d, hour, 0, 0, 0)
+  // Find the UTC instant whose local time in the target TZ equals ymd + hour.
+  let ms = naive - getTimezoneOffsetMs(naive, timeZone)
+  for (let i = 0; i < 3; i++) {
+    const offset = getTimezoneOffsetMs(ms, timeZone)
+    const next = naive - offset
+    if (Math.abs(next - ms) < 1000) return next
+    ms = next
+  }
+  return ms
+}
 
-  return (
-    <div className="bg-background px-4 py-3">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <span
-            className={cn(
-              "inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
-              isLong
-                ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
-                : "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-            )}
-          >
-            {side}
-          </span>
-          <span className="text-[11px] text-muted-foreground tabular-nums">
-            {filled} / {totalFilled} signals · {formatUsd(sharePct, 1)}%
-          </span>
-        </div>
-        <span
-          className={cn(
-            "font-mono text-sm font-semibold tabular-nums",
-            pnlClass(pnl),
-          )}
-        >
-          {formatPnl(pnl)}
-        </span>
-      </div>
+/** Return the local calendar-day domain (midnight → next midnight) for the first equity point. */
+function getDayDomain(
+  equity: { t: string }[],
+  timeZone: string,
+): [number, number] | undefined {
+  if (equity.length === 0) return undefined
+  const firstMs = Date.parse(equity[0].t)
+  if (Number.isNaN(firstMs)) return undefined
 
-      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className={cn(
-            "h-full rounded-full transition-[width]",
-            isLong ? "bg-emerald-500" : "bg-rose-500",
-          )}
-          style={{ width: `${barPct}%` }}
-        />
-      </div>
+  const localYmd = msToLocalYmd(firstMs, timeZone)
+  const [y, m, d] = localYmd.split("-").map(Number)
+  const nextDate = new Date(Date.UTC(y, m - 1, d + 1))
+  const nextYmd = nextDate.toISOString().slice(0, 10)
 
-      <div className="mt-2.5 grid grid-cols-3 gap-2 text-[11px]">
-        <div>
-          <div className="text-muted-foreground">Win rate</div>
-          <div className="mt-0.5 font-mono font-medium tabular-nums">
-            {formatUsd(winRate * 100, 1)}%
-            <span className="ml-1 text-muted-foreground">
-              {wins}/{closed || filled}
-            </span>
-          </div>
-        </div>
-        <div>
-          <div className="text-muted-foreground">PnL share</div>
-          <div
-            className={cn(
-              "mt-0.5 font-mono font-medium tabular-nums",
-              pnlClass(pnl),
-            )}
-          >
-            {formatUsd(pnlSharePct, 1)}%
-          </div>
-        </div>
-        <div>
-          <div className="text-muted-foreground">PF</div>
-          <div className="mt-0.5 font-mono font-medium tabular-nums">{pf}</div>
-        </div>
-      </div>
-    </div>
-  )
+  return [
+    localYmdToMs(localYmd, 0, timeZone),
+    localYmdToMs(nextYmd, 0, timeZone),
+  ]
+}
+
+/**
+ * Session bands for one local calendar day (midnight → midnight),
+ * derived from UTC session windows and clipped to the local day.
+ *
+ * Paint uses non-overlapping splits at Tokyo close / London-NY window:
+ *   Asia:        22:00→09:00 UTC
+ *   Europe + US: 09:00→22:00 UTC  (London open 08:00 is shown in the legend)
+ */
+function buildSessionBandsForDay(
+  ymd: string,
+  timeZone: string,
+): import("@/components/charts/signed-area-curve-chart").SessionBand[] {
+  const dayStart = localYmdToMs(ymd, 0, timeZone)
+  const [y, m, d] = ymd.split("-").map(Number)
+  const nextYmd = new Date(Date.UTC(y, m - 1, d + 1)).toISOString().slice(0, 10)
+  const dayEnd = localYmdToMs(nextYmd, 0, timeZone)
+
+  // Walk a few UTC days that can overlap this local day.
+  const probe = new Date(dayStart - 12 * 60 * 60 * 1000)
+  const bands: import("@/components/charts/signed-area-curve-chart").SessionBand[] =
+    []
+
+  for (let i = 0; i < 3; i++) {
+    const utcY = probe.getUTCFullYear()
+    const utcM = probe.getUTCMonth()
+    const utcD = probe.getUTCDate() + i
+
+    // Asia 22:00 UTC → 09:00 UTC next day
+    const asiaStart = Date.UTC(utcY, utcM, utcD, 22, 0, 0)
+    const asiaEnd = Date.UTC(utcY, utcM, utcD + 1, 9, 0, 0)
+    const asiaClipStart = Math.max(asiaStart, dayStart)
+    const asiaClipEnd = Math.min(asiaEnd, dayEnd)
+    if (asiaClipEnd > asiaClipStart) {
+      bands.push({
+        start: asiaClipStart,
+        end: asiaClipEnd,
+        label: "Asia (Sydney + Tokyo)",
+        color: "#818cf8",
+      })
+    }
+
+    // Europe+US paint: 09:00→22:00 UTC (no overlap with Asia paint)
+    const euStart = Date.UTC(utcY, utcM, utcD, 9, 0, 0)
+    const euEnd = Date.UTC(utcY, utcM, utcD, 22, 0, 0)
+    const euClipStart = Math.max(euStart, dayStart)
+    const euClipEnd = Math.min(euEnd, dayEnd)
+    if (euClipEnd > euClipStart) {
+      bands.push({
+        start: euClipStart,
+        end: euClipEnd,
+        label: "Europe + US (London + NY)",
+        color: "#34d399",
+      })
+    }
+  }
+
+  return bands
+}
+
+/** Build session bands covering the calendar day of the first equity point. */
+function buildSessionBands(
+  equity: { t: string }[],
+  timeZone: string,
+): import("@/components/charts/signed-area-curve-chart").SessionBand[] {
+  if (equity.length === 0) return []
+  const firstMs = Date.parse(equity[0].t)
+  if (Number.isNaN(firstMs)) return []
+  return buildSessionBandsForDay(msToLocalYmd(firstMs, timeZone), timeZone)
+}
+
+function formatDuration(ms: number | null | undefined): string {
+  if (ms == null || ms <= 0) return "—"
+  const minutes = Math.floor(ms / 60_000)
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+  if (hours > 0) return `${hours}h ${mins}m`
+  return `${mins}m`
 }
 
 function formatSimTime(iso: string | null | undefined): string {
@@ -856,23 +788,419 @@ function formatSimTime(iso: string | null | undefined): string {
   return `${m[2]} ${m[3]}`
 }
 
+function StatTile({
+  label,
+  value,
+  sub,
+  positive,
+}: {
+  label: string
+  value: string
+  sub?: string
+  positive?: boolean | null
+}) {
+  return (
+    <div className="rounded-md border bg-card p-2.5">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </div>
+      <div
+        className={cn(
+          "mt-1 font-mono text-sm font-semibold tabular-nums",
+          positive === true
+            ? "text-emerald-600 dark:text-emerald-400"
+            : positive === false
+              ? "text-rose-600 dark:text-rose-400"
+              : "text-foreground",
+        )}
+      >
+        {value}
+      </div>
+      {sub ? (
+        <div className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
+          {sub}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function SimAnalyticsPanel({
+  summary,
+}: {
+  summary: NonNullable<Awaited<ReturnType<typeof api.simulate>>["summary"]>
+}) {
+  const a = summary.analytics
+  if (!a) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
+        <p className="text-sm text-muted-foreground">
+          Analytics not available for this result.
+        </p>
+      </div>
+    )
+  }
+
+  const long = a.by_side.long
+  const short = a.by_side.short
+
+  return (
+    <div className="space-y-4 p-3">
+      {/* Executive strip */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+        <StatTile
+          label="Avg PnL / trade"
+          value={`$${formatUsd(a.avg_pnl_usd)}`}
+          positive={a.avg_pnl_usd > 0}
+        />
+        <StatTile
+          label="Avg win"
+          value={`$${formatUsd(a.avg_win_usd)}`}
+          positive
+          sub={`${summary.wins} wins`}
+        />
+        <StatTile
+          label="Avg loss"
+          value={`$${formatUsd(a.avg_loss_usd)}`}
+          positive={false}
+          sub={`${summary.losses} losses`}
+        />
+        <StatTile
+          label="Best trade"
+          value={`$${formatUsd(a.best_trade?.pnl_usd)}`}
+          positive={a.best_trade ? a.best_trade.pnl_usd > 0 : null}
+          sub={`#${a.best_trade?.trade_id ?? "—"}`}
+        />
+        <StatTile
+          label="Worst trade"
+          value={`$${formatUsd(a.worst_trade?.pnl_usd)}`}
+          positive={a.worst_trade ? a.worst_trade.pnl_usd > 0 : null}
+          sub={`#${a.worst_trade?.trade_id ?? "—"}`}
+        />
+        <StatTile
+          label="Max streak"
+          value={`${a.max_consecutive_wins}W / ${a.max_consecutive_losses}L`}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {/* Duration */}
+        <div className="rounded-md border bg-card p-3">
+          <p className="mb-2.5 text-xs font-semibold tracking-tight">
+            Duration analysis
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            <StatTile
+              label="Shortest win"
+              value={formatDuration(a.shortest_win_ms)}
+              positive
+            />
+            <StatTile
+              label="Shortest loss"
+              value={formatDuration(a.shortest_loss_ms)}
+              positive={false}
+            />
+            <StatTile
+              label="Avg win duration"
+              value={formatDuration(a.avg_win_duration_ms)}
+              positive
+            />
+            <StatTile
+              label="Avg loss duration"
+              value={formatDuration(a.avg_loss_duration_ms)}
+              positive={false}
+            />
+          </div>
+        </div>
+
+        {/* Long vs Short deep dive */}
+        <div className="rounded-md border bg-card p-3">
+          <p className="mb-2.5 text-xs font-semibold tracking-tight">
+            Long vs Short analytics
+          </p>
+          <div className="space-y-2">
+            <div className="grid grid-cols-4 gap-2 rounded-md bg-emerald-500/[0.06] px-2 py-1.5 text-[11px]">
+              <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                LONG
+              </span>
+              <span className="text-right font-mono tabular-nums">
+                avg ${formatUsd(long?.avg_pnl_usd)}
+              </span>
+              <span className="text-right font-mono tabular-nums text-emerald-600">
+                +${formatUsd(long?.biggest_win_usd)}
+              </span>
+              <span className="text-right font-mono tabular-nums text-rose-600">
+                ${formatUsd(long?.biggest_loss_usd)}
+              </span>
+            </div>
+            <div className="grid grid-cols-4 gap-2 rounded-md bg-rose-500/[0.06] px-2 py-1.5 text-[11px]">
+              <span className="font-semibold text-rose-600 dark:text-rose-400">
+                SHORT
+              </span>
+              <span className="text-right font-mono tabular-nums">
+                avg ${formatUsd(short?.avg_pnl_usd)}
+              </span>
+              <span className="text-right font-mono tabular-nums text-emerald-600">
+                +${formatUsd(short?.biggest_win_usd)}
+              </span>
+              <span className="text-right font-mono tabular-nums text-rose-600">
+                ${formatUsd(short?.biggest_loss_usd)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        {/* Session PnL */}
+        <div className="rounded-md border bg-card p-3">
+          <p className="mb-2.5 text-xs font-semibold tracking-tight">
+            PnL by session
+          </p>
+          <div className="space-y-2">
+            {Object.entries(a.session_pnls).map(([session, pnl]) => {
+              const label =
+                session === "sydney_tokyo" ? "Sydney / Tokyo" : "London / NY"
+              return (
+                <div
+                  key={session}
+                  className="flex items-center justify-between rounded-md border px-2.5 py-1.5"
+                >
+                  <span className="text-[11px] font-medium">{label}</span>
+                  <span
+                    className={cn(
+                      "font-mono text-sm font-semibold tabular-nums",
+                      pnlClass(pnl),
+                    )}
+                  >
+                    {formatPnl(pnl)}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* Monthly PnL */}
+        <div className="rounded-md border bg-card p-3">
+          <p className="mb-2.5 text-xs font-semibold tracking-tight">
+            Monthly PnL
+          </p>
+          <div className="max-h-48 overflow-auto">
+            <div className="grid grid-cols-[1fr_4rem_3rem_3rem] gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              <span>Month</span>
+              <span className="text-right">PnL</span>
+              <span className="text-right">W</span>
+              <span className="text-right">L</span>
+            </div>
+            {a.monthly_pnls.map((m) => (
+              <div
+                key={m.period}
+                className="grid grid-cols-[1fr_4rem_3rem_3rem] gap-1 border-b border-border/40 py-1.5 text-[11px]"
+              >
+                <span className="font-mono">{m.period}</span>
+                <span
+                  className={cn(
+                    "text-right font-mono font-semibold tabular-nums",
+                    pnlClass(m.pnl_usd),
+                  )}
+                >
+                  {formatPnl(m.pnl_usd)}
+                </span>
+                <span className="text-right font-mono text-emerald-600">
+                  {m.wins}
+                </span>
+                <span className="text-right font-mono text-rose-600">
+                  {m.losses}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Keep a top-layer spinner until Recharts has a real SVG size (was painting blank). */
+function DeferredTradeEquityChart({
+  equity,
+  sessionBands,
+  timeZone,
+  domain,
+}: {
+  equity: EquityPoint[]
+  sessionBands: import("@/components/charts/signed-area-curve-chart").SessionBand[]
+  timeZone: string
+  domain: [number, number] | undefined
+}) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const [chartReady, setChartReady] = useState(false)
+
+  useEffect(() => {
+    setChartReady(false)
+    if (equity.length === 0) {
+      setChartReady(true)
+      return
+    }
+
+    const el = hostRef.current
+    if (!el) return
+
+    let settled = false
+    const markReady = () => {
+      if (settled) return
+      const svg = el.querySelector(".recharts-surface") as SVGElement | null
+      const w = svg?.clientWidth ?? 0
+      const h = svg?.clientHeight ?? 0
+      if (w > 16 && h > 16) {
+        settled = true
+        // Brief pause so the spinner is actually visible
+        window.setTimeout(() => setChartReady(true), 120)
+      }
+    }
+
+    const ro = new ResizeObserver(() => markReady())
+    ro.observe(el)
+    const poll = window.setInterval(markReady, 50)
+    const fallback = window.setTimeout(() => setChartReady(true), 3000)
+
+    return () => {
+      settled = true
+      ro.disconnect()
+      window.clearInterval(poll)
+      window.clearTimeout(fallback)
+    }
+  }, [equity])
+
+  return (
+    <div
+      ref={hostRef}
+      className="relative h-28 w-full min-h-[7rem] overflow-hidden rounded-md bg-muted/15"
+    >
+      {equity.length === 0 ? (
+        <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
+          No path
+        </div>
+      ) : (
+        <PreciseEquityCurveChart
+          equity={equity}
+          className="h-full min-h-[7rem] w-full"
+          emptyMessage="No path"
+          sessionBands={sessionBands}
+          timeZone={timeZone}
+          domain={domain}
+        />
+      )}
+
+      {!chartReady ? (
+        <div
+          className="pointer-events-none absolute inset-0 z-30 flex items-center justify-center bg-background/80"
+          aria-busy
+          aria-label="Loading chart"
+        >
+          <Spinner className="size-5 text-rose-500" />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function TradeWiseGrid({
+  tradeEquity,
+  trades,
+  timeZone = "Europe/Bucharest",
+}: {
+  tradeEquity: Record<string, EquityPoint[]>
+  trades: NonNullable<Awaited<ReturnType<typeof api.simulate>>["trades"]>
+  timeZone?: string
+}) {
+  const filled = trades.filter((t) => t.status === "ok" && t.net_pnl_usd != null)
+  if (filled.length === 0) {
+    return (
+      <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+        No filled trades to chart.
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
+      {filled.map((trade) => {
+        const path = tradeEquity[String(trade.trade_id)] ?? []
+        const bands = buildSessionBands(path, timeZone)
+        const domain = getDayDomain(path, timeZone)
+        return (
+          <div
+            key={trade.trade_id}
+            className="rounded-md border bg-card p-2"
+          >
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs font-semibold text-muted-foreground">
+                  #{trade.trade_id}
+                </span>
+                <span
+                  className={cn(
+                    "inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide",
+                    trade.side.toLowerCase() === "long"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {trade.side}
+                </span>
+              </div>
+              <span
+                className={cn(
+                  "font-mono text-xs font-semibold tabular-nums",
+                  pnlClass(trade.net_pnl_usd),
+                )}
+              >
+                {formatPnl(trade.net_pnl_usd)}
+              </span>
+            </div>
+            <DeferredTradeEquityChart
+              equity={path}
+              sessionBands={bands}
+              timeZone={timeZone}
+              domain={domain}
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function SimTradesTable({
   rows,
-  selectedId,
-  onSelect,
+  tradeEquity,
+  timeZone,
 }: {
   rows: NonNullable<
     Awaited<ReturnType<typeof api.simulate>>
   >["trades"]
-  selectedId: number | null
-  onSelect: (id: number) => void
+  tradeEquity: Record<string, EquityPoint[]>
+  timeZone: string
 }) {
+  const [zoomedId, setZoomedId] = useState<number | null>(null)
+  const zoomedRow = useMemo(
+    () => rows.find((r) => r.trade_id === zoomedId) ?? null,
+    [rows, zoomedId],
+  )
+  const zoomedPath = useMemo(
+    () => (zoomedId != null ? tradeEquity[String(zoomedId)] ?? [] : []),
+    [tradeEquity, zoomedId],
+  )
+  const zoomedDomain = useMemo(
+    () => getDayDomain(zoomedPath, timeZone),
+    [zoomedPath, timeZone],
+  )
   /**
    * Compare-first column order:
-   * identity → times (TV vs Sim stacked) → fills/slip/excursion → PnL trio (TV | Sim | Δ)
+   * identity → times (TV vs Sim stacked) → fills/slip/excursion → PnL trio (TV | Sim | Δ) → zoom
    */
   const rowGrid =
-    "grid grid-cols-[2.5rem_3.5rem_minmax(11rem,1.15fr)_4rem_4rem_3.25rem_3.25rem_4rem_4rem_minmax(13rem,0.95fr)] items-center gap-x-3 px-3"
+    "grid grid-cols-[2.5rem_3.5rem_minmax(11rem,1.15fr)_4rem_4rem_3.25rem_3.25rem_4rem_4rem_minmax(13rem,0.95fr)_2rem] items-center gap-x-3 px-3"
 
   if (rows.length === 0) {
     return (
@@ -897,33 +1225,28 @@ function SimTradesTable({
         <span className="py-2.5 text-right">Fill out</span>
         <span className="py-2.5 text-right">Slip in</span>
         <span className="py-2.5 text-right">Slip out</span>
-        <span className="py-2.5 text-right">Run-up</span>
-        <span className="py-2.5 text-right">Max DD</span>
+        <span className="py-2.5 text-right">MFE</span>
+        <span className="py-2.5 text-right">MAE</span>
         <span className="py-2.5 text-right">PnL compare</span>
+        <span className="py-2.5 text-right" />
       </div>
 
       {rows.map((row, i) => {
         const disabled = row.status !== "ok" || row.net_pnl_usd == null
         const isLong = row.side.toLowerCase() === "long"
-        const selected = selectedId === row.trade_id
         const diff =
           row.net_pnl_usd != null && row.tv_pnl_usd != null
             ? row.net_pnl_usd - row.tv_pnl_usd
             : null
+        const hasPath = Boolean(tradeEquity[String(row.trade_id)]?.length)
         return (
-          <button
+          <div
             key={row.trade_id}
-            type="button"
-            disabled={disabled}
-            onClick={() => onSelect(row.trade_id)}
             className={cn(
               rowGrid,
-              "w-full border-b border-border/40 py-2 text-left transition-colors",
-              disabled
-                ? "cursor-default opacity-45"
-                : "cursor-pointer hover:bg-muted/35",
-              selected && "bg-sky-500/10 ring-1 ring-inset ring-sky-500/30",
-              i % 2 === 1 && !selected && "bg-muted/10",
+              "w-full border-b border-border/40 py-2 text-left",
+              disabled && "opacity-45",
+              i % 2 === 1 && "bg-muted/10",
             )}
           >
             <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
@@ -1037,9 +1360,51 @@ function SimTradesTable({
                 </div>
               </div>
             </div>
-          </button>
+
+            {/* Row-level zoom into trade equity curve */}
+            <span className="flex justify-end">
+              {hasPath ? (
+                <button
+                  type="button"
+                  onClick={() => setZoomedId(row.trade_id)}
+                  className="rounded p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                  title="Show equity curve"
+                >
+                  <ZoomIn className="size-3.5" />
+                </button>
+              ) : null}
+            </span>
+          </div>
         )
       })}
+
+      <EquityCurveZoomModal
+        open={zoomedRow != null}
+        onClose={() => setZoomedId(null)}
+        equity={zoomedPath}
+        emptyMessage="No tick path for this trade"
+        sessionBands={buildSessionBands(zoomedPath, timeZone)}
+        timeZone={timeZone}
+        domain={zoomedDomain}
+        title={
+          zoomedRow
+            ? `Trade #${zoomedRow.trade_id} · ${zoomedRow.side}`
+            : "Equity curve"
+        }
+        subtitle={
+          zoomedRow
+            ? `${formatSimTime(zoomedRow.fill_entry_time)} → ${formatSimTime(zoomedRow.fill_exit_time)}`
+            : undefined
+        }
+        extremum={
+          zoomedRow
+            ? {
+                maxRunup: zoomedRow.max_runup_usd,
+                maxDrawdown: zoomedRow.max_drawdown_usd,
+              }
+            : undefined
+        }
+      />
     </>
   )
 }
