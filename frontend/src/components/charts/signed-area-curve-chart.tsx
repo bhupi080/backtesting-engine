@@ -3,13 +3,14 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ReferenceDot,
   ReferenceLine,
-  Scatter,
   XAxis,
   YAxis,
 } from "recharts"
 
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart"
+import { cn } from "@/lib/utils"
 
 /** Canonical point: time string + numeric series value. */
 export type CurvePoint = {
@@ -26,31 +27,30 @@ export type ExtremumDot = {
 
 export type SignedAreaCurveChartProps = {
   data: CurvePoint[]
-  /** Tooltip / config label, e.g. "P&L" or "Δ price" */
   valueLabel?: string
   className?: string
   emptyMessage?: string
-  /** Prepend a zero point just before the first sample */
   anchorAtZero?: boolean
-  /**
-   * @deprecated Level slabs removed — use showExtremumDots instead.
-   * Kept so callers compiling against old prop don't break.
-   */
+  /** @deprecated Level slabs removed */
   showLevelGuides?: boolean
-  /** Green max-runup + red max-DD dots on the curve (default true) */
   showExtremumDots?: boolean
-  /** Optional override (e.g. backend MAE/MFE times); else derived from series */
   extremumDots?: {
     maxRunup?: ExtremumDot | null
     maxDrawdown?: ExtremumDot | null
   }
-  /** Interpolation: linear = honest ticks; monotone = smooth */
+  /** mt5 Precise Equity uses monotone */
   curveType?: "linear" | "monotone" | "stepAfter"
-  /** Timezone for axis + tooltip */
   timeZone?: string
-  /** Format tooltip main value */
   formatValue?: (n: number) => string
 }
+
+const COLORS = {
+  green: "#22c55e",
+  red: "#ef4444",
+  grid: "#bfbfbfff",
+  tick: "#666",
+  cursor: "#bfbfbf",
+} as const
 
 const defaultFormatUsd = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -61,8 +61,8 @@ const defaultFormatUsd = (n: number) =>
   }).format(n)
 
 /**
- * Signed area equity curve: green above 0, red below, optional
- * max-runup (green) / max-DD (red) markers on the series extrema.
+ * Precise-Equity-Curve visual (mt5-dashboard parity):
+ * green above 0 / red below, vertical grid, monotone areas, #22c55e / #ef4444.
  */
 export function SignedAreaCurveChart({
   data,
@@ -72,7 +72,7 @@ export function SignedAreaCurveChart({
   anchorAtZero = true,
   showExtremumDots = true,
   extremumDots,
-  curveType = "linear",
+  curveType = "monotone",
   timeZone = "Europe/Bucharest",
   formatValue = defaultFormatUsd,
 }: SignedAreaCurveChartProps) {
@@ -131,7 +131,10 @@ export function SignedAreaCurveChart({
 
   const markers = useMemo(() => {
     if (!showExtremumDots || displayData.length === 0) {
-      return { runup: null as ExtremumDot | null, drawdown: null as ExtremumDot | null }
+      return {
+        runup: null as ExtremumDot | null,
+        drawdown: null as ExtremumDot | null,
+      }
     }
 
     let runup: ExtremumDot | null = extremumDots?.maxRunup ?? null
@@ -153,7 +156,7 @@ export function SignedAreaCurveChart({
 
   if (displayData.length === 0) {
     return (
-      <div className="flex h-72 items-center justify-center text-sm text-muted-foreground">
+      <div className="flex h-48 items-center justify-center text-xs text-muted-foreground">
         {emptyMessage}
       </div>
     )
@@ -162,19 +165,19 @@ export function SignedAreaCurveChart({
   return (
     <ChartContainer
       config={{
-        pnl: { label: valueLabel, color: "#22c55e" },
+        pnl: { label: valueLabel, color: COLORS.green },
       }}
-      className={className ?? "h-72 w-full aspect-auto"}
+      className={cn("aspect-auto h-48 w-full justify-center", className)}
     >
       <AreaChart data={displayData}>
         <defs>
           <linearGradient id={positiveGradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#22c55e" stopOpacity={0.4} />
-            <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+            <stop offset="5%" stopColor={COLORS.green} stopOpacity={0.4} />
+            <stop offset="95%" stopColor={COLORS.green} stopOpacity={0} />
           </linearGradient>
           <linearGradient id={negativeGradientId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor="#ef4444" stopOpacity={0.4} />
-            <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+            <stop offset="5%" stopColor={COLORS.red} stopOpacity={0.4} />
+            <stop offset="95%" stopColor={COLORS.red} stopOpacity={0} />
           </linearGradient>
         </defs>
         <CartesianGrid
@@ -182,7 +185,7 @@ export function SignedAreaCurveChart({
           strokeDasharray="3 3"
           horizontal={false}
           strokeOpacity={1}
-          stroke="#bfbfbfff"
+          stroke={COLORS.grid}
         />
         <XAxis
           dataKey="time"
@@ -195,7 +198,7 @@ export function SignedAreaCurveChart({
               timeZone,
             })
           }
-          tick={{ fontSize: 10, fill: "#666" }}
+          tick={{ fontSize: 10, fill: COLORS.tick }}
           axisLine={false}
           tickLine={false}
           minTickGap={30}
@@ -207,8 +210,8 @@ export function SignedAreaCurveChart({
           orientation="right"
           tickLine={false}
           axisLine={false}
-          width={48}
-          tick={{ fontSize: 10, fill: "#666" }}
+          width={40}
+          tick={{ fontSize: 10, fill: COLORS.tick }}
           tickFormatter={(value) =>
             new Intl.NumberFormat("en-US", {
               notation: "compact",
@@ -217,30 +220,36 @@ export function SignedAreaCurveChart({
           }
         />
         <ChartTooltip
-          cursor={{ stroke: "#bfbfbf", strokeDasharray: "3 3" }}
+          cursor={{ stroke: COLORS.cursor, strokeDasharray: "3 3" }}
+          isAnimationActive={false}
           content={({ active, payload }) => {
             if (!active || !payload?.length) return null
-            const point = payload[0]?.payload as {
-              time?: number
-              pnl?: number
-              meta?: CurvePoint["meta"]
-            }
-            const pnl = point?.pnl ?? 0
+            const point = payload.find(
+              (p) =>
+                p?.payload &&
+                typeof (p.payload as { pnl?: unknown }).pnl === "number",
+            )?.payload as
+              | {
+                  time?: number
+                  pnl?: number
+                  meta?: CurvePoint["meta"]
+                }
+              | undefined
+            if (!point || point.time == null || point.pnl == null) return null
+            const pnl = point.pnl
             return (
               <div className="rounded-lg border bg-background p-3 shadow-lg">
                 <div className="space-y-2">
-                  {point?.time != null && (
-                    <div className="text-xs font-semibold text-muted-foreground">
-                      {new Date(point.time).toLocaleString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                        timeZone,
-                      })}
-                    </div>
-                  )}
+                  <div className="text-xs font-semibold text-muted-foreground">
+                    {new Date(point.time).toLocaleString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                      hour: "numeric",
+                      minute: "2-digit",
+                      timeZone,
+                    })}
+                  </div>
                   <div className="flex items-center gap-2">
                     <div
                       className={`h-2 w-2 rounded-full ${pnl >= 0 ? "bg-green-500" : "bg-red-500"}`}
@@ -249,7 +258,7 @@ export function SignedAreaCurveChart({
                       {valueLabel}: {formatValue(pnl)}
                     </span>
                   </div>
-                  {point?.meta &&
+                  {point.meta &&
                     Object.entries(point.meta).map(([k, v]) =>
                       v == null || v === "" ? null : (
                         <div
@@ -270,7 +279,7 @@ export function SignedAreaCurveChart({
         />
         <ReferenceLine
           y={0}
-          stroke={netProfit >= 0 ? "#22c55e" : "#ef4444"}
+          stroke={netProfit >= 0 ? COLORS.green : COLORS.red}
           strokeWidth={1}
           strokeDasharray="3 3"
           opacity={0.5}
@@ -278,69 +287,49 @@ export function SignedAreaCurveChart({
         <Area
           type={curveType}
           dataKey="positive_pnl"
-          stroke="#22c55e"
+          stroke={COLORS.green}
           strokeWidth={2}
           fill={`url(#${positiveGradientId})`}
           fillOpacity={0.4}
           baseLine={0}
           isAnimationActive={false}
           dot={false}
-          activeDot={{ r: 3 }}
+          activeDot={{ r: 4, strokeWidth: 0 }}
         />
         <Area
           type={curveType}
           dataKey="negative_pnl"
-          stroke="#ef4444"
+          stroke={COLORS.red}
           strokeWidth={2}
           fill={`url(#${negativeGradientId})`}
           fillOpacity={0.4}
           baseLine={0}
           isAnimationActive={false}
           dot={false}
-          activeDot={{ r: 3 }}
+          activeDot={{ r: 4, strokeWidth: 0 }}
         />
         {markers.runup ? (
-          <Scatter
-            data={[markers.runup]}
-            dataKey="pnl"
-            fill="#22c55e"
-            isAnimationActive={false}
-            shape={(props: { cx?: number; cy?: number }) => {
-              const { cx, cy } = props
-              if (cx == null || cy == null) return <g />
-              return (
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={6}
-                  fill="#22c55e"
-                  stroke="#fff"
-                  strokeWidth={1.5}
-                />
-              )
-            }}
+          <ReferenceDot
+            x={markers.runup.time}
+            y={markers.runup.pnl}
+            r={5}
+            fill={COLORS.green}
+            stroke="#fff"
+            strokeWidth={1}
+            ifOverflow="extendDomain"
+            isFront
           />
         ) : null}
         {markers.drawdown ? (
-          <Scatter
-            data={[markers.drawdown]}
-            dataKey="pnl"
-            fill="#ef4444"
-            isAnimationActive={false}
-            shape={(props: { cx?: number; cy?: number }) => {
-              const { cx, cy } = props
-              if (cx == null || cy == null) return <g />
-              return (
-                <circle
-                  cx={cx}
-                  cy={cy}
-                  r={6}
-                  fill="#ef4444"
-                  stroke="#fff"
-                  strokeWidth={1.5}
-                />
-              )
-            }}
+          <ReferenceDot
+            x={markers.drawdown.time}
+            y={markers.drawdown.pnl}
+            r={5}
+            fill={COLORS.red}
+            stroke="#fff"
+            strokeWidth={1}
+            ifOverflow="extendDomain"
+            isFront
           />
         ) : null}
       </AreaChart>

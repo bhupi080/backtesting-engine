@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app import duckdb_client as db
 from app.config import Settings, get_settings
@@ -75,12 +76,11 @@ def _to_ms(dt: datetime) -> int:
     return int(dt.timestamp() * 1000)
 
 
-def _fmt_ms(ms: int) -> str:
-    return (
-        datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
-        .strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        + "Z"
-    )
+def _fmt_ms(ms: int, settings: Settings | None = None) -> str:
+    """Format fill/chart times in the same TZ as TV trades (TV_TRADES_TZ)."""
+    settings = settings or get_settings()
+    tz = ZoneInfo(settings.tv_trades_tz)
+    return datetime.fromtimestamp(ms / 1000.0, tz=tz).isoformat(timespec="milliseconds")
 
 
 def _pnl_usd(
@@ -309,8 +309,8 @@ def simulate_fills(
                 tv_exit_price=t.close_price,
                 tv_pnl_usd=t.tv_net_pnl,
                 tv_qty=t.size,
-                fill_entry_time=_fmt_ms(ef[0]) if ef else None,
-                fill_exit_time=_fmt_ms(xf[0]) if xf else None,
+                fill_entry_time=_fmt_ms(ef[0], settings) if ef else None,
+                fill_exit_time=_fmt_ms(xf[0], settings) if xf else None,
                 fill_entry_price=ef[1] if ef else None,
                 fill_exit_price=xf[1] if xf else None,
                 entry_side=entry_need.lower() if ef else None,
@@ -557,10 +557,29 @@ def apply_sizing(
     ]
     peak = starting_balance
     max_dd = 0.0
+    max_dd_usd = 0.0
     wins = losses = 0
     gross_win = gross_loss = 0.0
     sim_total = 0.0
     tv_total = 0.0
+    side_stats: dict[str, dict[str, float | int]] = {
+        "long": {
+            "filled": 0,
+            "wins": 0,
+            "losses": 0,
+            "pnl_usd": 0.0,
+            "gross_win": 0.0,
+            "gross_loss": 0.0,
+        },
+        "short": {
+            "filled": 0,
+            "wins": 0,
+            "losses": 0,
+            "pnl_usd": 0.0,
+            "gross_win": 0.0,
+            "gross_loss": 0.0,
+        },
+    }
 
     for fill in fills:
         row = asdict(fill)
@@ -612,6 +631,8 @@ def apply_sizing(
         equity += net
         sim_total += net
         peak = max(peak, equity)
+        dd_usd = peak - equity
+        max_dd_usd = max(max_dd_usd, dd_usd)
         dd_pct = (peak - equity) / peak if peak else 0.0
         max_dd = max(max_dd, dd_pct)
 
@@ -621,6 +642,18 @@ def apply_sizing(
         else:
             losses += 1
             gross_loss += abs(net)
+
+        side_key = fill.side if fill.side in side_stats else None
+        if side_key is not None:
+            ss = side_stats[side_key]
+            ss["filled"] = int(ss["filled"]) + 1
+            ss["pnl_usd"] = float(ss["pnl_usd"]) + net
+            if net >= 0:
+                ss["wins"] = int(ss["wins"]) + 1
+                ss["gross_win"] = float(ss["gross_win"]) + net
+            else:
+                ss["losses"] = int(ss["losses"]) + 1
+                ss["gross_loss"] = float(ss["gross_loss"]) + abs(net)
 
         entry_slip = (
             abs(fill.fill_entry_price - fill.tv_entry_price) / pip
@@ -688,6 +721,34 @@ def apply_sizing(
             }
         )
 
+    def _side_summary(key: str) -> dict[str, Any]:
+        ss = side_stats[key]
+        n = int(ss["filled"])
+        w = int(ss["wins"])
+        l_ = int(ss["losses"])
+        closed_side = w + l_
+        gw = float(ss["gross_win"])
+        gl = float(ss["gross_loss"])
+        pnl = float(ss["pnl_usd"])
+        if gl > 0:
+            side_pf: float | None = round(gw / gl, 3)
+        elif gw > 0:
+            side_pf = None
+        else:
+            side_pf = 0.0
+        return {
+            "filled": n,
+            "share_pct": round(n / filled * 100, 1) if filled else 0.0,
+            "pnl_usd": round(pnl, 2),
+            "pnl_share_pct": round(pnl / sim_total * 100, 1)
+            if sim_total
+            else 0.0,
+            "win_rate": round(w / closed_side, 4) if closed_side else 0.0,
+            "wins": w,
+            "losses": l_,
+            "profit_factor": side_pf,
+        }
+
     return {
         "symbol": symbol,
         "strategy_id": "",  # filled by caller
@@ -710,20 +771,23 @@ def apply_sizing(
             "losses": losses,
             "profit_factor": pf,
             "max_drawdown_pct": round(max_dd * 100, 2),
+            "max_drawdown_usd": round(max_dd_usd, 2),
             "ending_equity": round(equity, 2),
             "return_pct": round(
                 (equity - starting_balance) / starting_balance * 100, 2
             )
             if starting_balance
             else 0.0,
+            "by_side": {
+                "long": _side_summary("long"),
+                "short": _side_summary("short"),
+            },
         },
         # Compat top-level fields
         "trade_count": len(fills),
         "closed_count": closed,
         "total_pnl": round(sim_total, 2),
-        "max_drawdown": round(max_dd * starting_balance, 2)
-        if starting_balance
-        else round(max_dd, 2),
+        "max_drawdown": round(max_dd_usd, 2),
         "trades": trades,
         "equity": equity_out,
     }

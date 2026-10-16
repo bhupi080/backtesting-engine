@@ -137,6 +137,17 @@ class EquityPoint(BaseModel):
     drawdown: float = 0.0
 
 
+class SideSummary(BaseModel):
+    filled: int
+    share_pct: float
+    pnl_usd: float
+    pnl_share_pct: float
+    win_rate: float
+    wins: int
+    losses: int
+    profit_factor: float | None
+
+
 class SimSummary(BaseModel):
     trades: int
     filled: int
@@ -149,8 +160,10 @@ class SimSummary(BaseModel):
     losses: int
     profit_factor: float | None
     max_drawdown_pct: float
+    max_drawdown_usd: float = 0.0
     ending_equity: float
     return_pct: float
+    by_side: dict[str, SideSummary] = Field(default_factory=dict)
 
 
 class SimSettings(BaseModel):

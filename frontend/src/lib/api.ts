@@ -119,6 +119,8 @@ export type SimulateResponse = {
     close_price?: number | null
     size?: number
     status?: string | null
+    fill_entry_time?: string | null
+    fill_exit_time?: string | null
     fill_entry_price?: number | null
     fill_exit_price?: number | null
     entry_slip_pips?: number | null
@@ -145,8 +147,31 @@ export type SimulateResponse = {
     losses: number
     profit_factor: number | null
     max_drawdown_pct: number
+    max_drawdown_usd?: number
     ending_equity: number
     return_pct: number
+    by_side?: {
+      long?: {
+        filled: number
+        share_pct: number
+        pnl_usd: number
+        pnl_share_pct: number
+        win_rate: number
+        wins: number
+        losses: number
+        profit_factor: number | null
+      }
+      short?: {
+        filled: number
+        share_pct: number
+        pnl_usd: number
+        pnl_share_pct: number
+        win_rate: number
+        wins: number
+        losses: number
+        profit_factor: number | null
+      }
+    }
   }
   settings?: {
     lots: number

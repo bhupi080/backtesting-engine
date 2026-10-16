@@ -3,7 +3,6 @@ import { useMemo } from "react"
 import {
   SignedAreaCurveChart,
   equityToCurvePoints,
-  type SignedAreaCurveChartProps,
 } from "@/components/charts/signed-area-curve-chart"
 import { cn } from "@/lib/utils"
 
@@ -23,12 +22,12 @@ export type ExtremumStats = {
 type Props = {
   equity: EquityPoint[]
   className?: string
-  /** mt5-dashboard style Max Runup / Max DD cards beside the chart */
+  emptyMessage?: string
+  /** mt5 Precise Equity Curve right-rail (Total PnL + Max Runup / Max DD) */
   showExtremumStats?: boolean
-  /** Optional overrides (e.g. backend MAE/MFE); otherwise derived from curve */
   extremum?: ExtremumStats
   timeZone?: string
-} & Pick<SignedAreaCurveChartProps, "emptyMessage" | "curveType">
+}
 
 const usdFmt = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -36,7 +35,10 @@ const usdFmt = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
 })
 
-function formatClock(iso: string | null | undefined, timeZone: string): string | null {
+function formatClock(
+  iso: string | null | undefined,
+  timeZone: string,
+): string | null {
   if (!iso) return null
   const ms = Date.parse(iso)
   if (Number.isNaN(ms)) return null
@@ -70,12 +72,14 @@ function deriveExtremum(equity: EquityPoint[]): Required<ExtremumStats> {
   }
 }
 
-/** Equity-curve convenience wrapper around SignedAreaCurveChart. */
+/**
+ * Same shell as mt5-dashboard Precise Equity Curve row:
+ * chart | right rail (Total PnL + Max Runup / Max DD).
+ */
 export function PreciseEquityCurveChart({
   equity,
   className,
   emptyMessage = "No equity points",
-  curveType = "linear",
   showExtremumStats = false,
   extremum,
   timeZone = "Europe/Bucharest",
@@ -87,6 +91,8 @@ export function PreciseEquityCurveChart({
     maxRunupTime: extremum?.maxRunupTime ?? derived.maxRunupTime,
     maxDrawdownTime: extremum?.maxDrawdownTime ?? derived.maxDrawdownTime,
   }
+
+  const netProfit = equity.length > 0 ? equity[equity.length - 1].equity : 0
 
   const extremumDots = useMemo(() => {
     const runupMs = stats.maxRunupTime ? Date.parse(stats.maxRunupTime) : NaN
@@ -101,18 +107,23 @@ export function PreciseEquityCurveChart({
           ? { time: ddMs, pnl: Number(stats.maxDrawdown) }
           : null,
     }
-  }, [stats.maxRunup, stats.maxDrawdown, stats.maxRunupTime, stats.maxDrawdownTime])
+  }, [
+    stats.maxRunup,
+    stats.maxDrawdown,
+    stats.maxRunupTime,
+    stats.maxDrawdownTime,
+  ])
 
   const chart = (
     <SignedAreaCurveChart
       data={equityToCurvePoints(equity)}
       valueLabel="P&L"
-      className={cn(showExtremumStats ? "h-full min-h-[10rem] w-full aspect-auto" : null, className)}
+      className={cn("aspect-auto h-48 w-full", className)}
       emptyMessage={emptyMessage}
       anchorAtZero
       showExtremumDots
       extremumDots={extremumDots}
-      curveType={curveType}
+      curveType="monotone"
       timeZone={timeZone}
     />
   )
@@ -126,15 +137,29 @@ export function PreciseEquityCurveChart({
 
   return (
     <div className="flex flex-row items-stretch overflow-hidden rounded-lg border bg-card">
-      <div className="min-w-0 flex-1 p-1.5">{chart}</div>
-      <div className="flex w-44 shrink-0 flex-col gap-2 border-l bg-muted/30 p-2.5">
+      {/* Chart — same flex-1 center pane as mt5 EquityCurveRow */}
+      <div className="min-w-0 flex-1">{chart}</div>
+
+      {/* Right stats — match mt5 w-48 / muted/30 / Max Runup · Max DD */}
+      <div className="flex w-48 shrink-0 flex-col gap-3 bg-muted/30 p-3">
+        <div className="flex flex-col">
+          <span className="text-[10px] font-semibold uppercase text-muted-foreground">
+            Total PnL
+          </span>
+          <span
+            className={`text-sm font-bold ${netProfit >= 0 ? "text-green-600" : "text-red-600"}`}
+          >
+            {usdFmt.format(netProfit)}
+          </span>
+        </div>
+
         <div className="flex gap-2">
           <div className="flex-1 rounded-md border bg-background/50 p-2">
             <span className="mb-1 block text-[9px] font-semibold uppercase text-muted-foreground">
               Max Runup
             </span>
             <div className="space-y-1">
-              <span className="text-xs font-bold text-green-600 dark:text-green-500">
+              <span className="text-xs font-bold text-green-600">
                 {usdFmt.format(Number(stats.maxRunup ?? 0))}
               </span>
               {runupClock ? (
@@ -147,7 +172,7 @@ export function PreciseEquityCurveChart({
               Max DD
             </span>
             <div className="space-y-1">
-              <span className="text-xs font-bold text-red-600 dark:text-red-500">
+              <span className="text-xs font-bold text-red-600">
                 {usdFmt.format(Number(stats.maxDrawdown ?? 0))}
               </span>
               {ddClock ? (

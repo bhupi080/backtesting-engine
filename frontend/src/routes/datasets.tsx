@@ -12,6 +12,7 @@ import {
   Terminal,
 } from "lucide-react"
 
+import { LoadingState } from "@/components/loading-state"
 import { api, type Dataset, type TickJob } from "@/lib/api"
 import { useFilters } from "@/lib/filters"
 import {
@@ -27,7 +28,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 
 export const Route = createFileRoute("/datasets")({
@@ -293,11 +294,11 @@ function DatasetsPage() {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading ? (
-              <div className="space-y-1 p-2">
-                {Array.from({ length: 12 }).map((_, i) => (
-                  <Skeleton key={i} className="h-8 w-full" />
-                ))}
-              </div>
+              <LoadingState
+                className="py-10"
+                size="sm"
+                message="Loading symbols…"
+              />
             ) : rows.length === 0 ? (
               <p className="p-4 text-xs text-muted-foreground">No matches.</p>
             ) : (
@@ -696,29 +697,10 @@ function RecentTicksTable({
 
   if (loading) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="shrink-0 border-b border-border px-4 py-2.5">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="mt-1.5 h-3 w-40" />
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {Array.from({ length: 14 }).map((_, i) => (
-            <div
-              key={i}
-              className={cn(
-                rowGrid,
-                "h-9 border-b border-border/40",
-                i % 2 === 1 && "bg-muted/15",
-              )}
-            >
-              <Skeleton className="h-3 w-40" />
-              <Skeleton className="h-3 w-40" />
-              <Skeleton className="mx-auto h-3 w-8" />
-              <Skeleton className="ml-auto h-3 w-16" />
-            </div>
-          ))}
-        </div>
-      </div>
+      <LoadingState
+        title="Loading ticks"
+        message="Fetching recent tick rows…"
+      />
     )
   }
 
@@ -831,8 +813,9 @@ function JobConsole({
 
   if (loading) {
     return (
-      <div className="shrink-0 border-t border-border p-3">
-        <Skeleton className="h-28 w-full rounded-lg" />
+      <div className="flex shrink-0 items-center justify-center gap-2 border-t border-border px-4 py-6">
+        <Spinner className="size-4 text-rose-500" />
+        <span className="text-xs text-muted-foreground">Loading job…</span>
       </div>
     )
   }

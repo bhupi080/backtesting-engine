@@ -10,12 +10,12 @@ import {
   Search,
 } from "lucide-react"
 
+import { LoadingState } from "@/components/loading-state"
 import { api, type StrategyInfo } from "@/lib/api"
 import { useFilters } from "@/lib/filters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
 
 export const Route = createFileRoute("/trades")({
@@ -255,11 +255,11 @@ function TradesPage() {
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {loading ? (
-              <div className="space-y-1 p-2">
-                {Array.from({ length: 10 }).map((_, i) => (
-                  <Skeleton key={i} className="h-10 w-full" />
-                ))}
-              </div>
+              <LoadingState
+                className="py-10"
+                size="sm"
+                message="Loading strategies…"
+              />
             ) : groups.length === 0 ? (
               <p className="p-4 text-xs text-muted-foreground">No matches.</p>
             ) : (
@@ -518,28 +518,10 @@ function TradesTable({
 
   if (loading) {
     return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <div className="shrink-0 border-b border-border px-4 py-2.5">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="mt-1.5 h-3 w-40" />
-        </div>
-        <div className="min-h-0 flex-1 overflow-hidden">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div
-              key={i}
-              className={cn(
-                rowGrid,
-                "h-9 border-b border-border/40",
-                i % 2 === 1 && "bg-muted/15",
-              )}
-            >
-              {Array.from({ length: 9 }).map((_, j) => (
-                <Skeleton key={j} className="h-3 w-full" />
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
+      <LoadingState
+        title="Loading trades"
+        message="Fetching TradingView trade list…"
+      />
     )
   }
 
