@@ -112,6 +112,143 @@ def _mark_side(direction: str) -> str:
     return "BID" if direction == "long" else "ASK"
 
 
+# UTC session windows matching equity-curve bands (non-overlapping):
+#   Asia (Sydney+Tokyo): 22:00 → 09:00 UTC
+#   Europe+US:           09:00 → 22:00 UTC
+_SESSION_ASIA = "sydney_tokyo"
+_SESSION_EU = "london_newyork"
+
+
+def _utc_session_key(ms: int) -> str:
+    hour = datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc).hour
+    if hour >= 22 or hour < 9:
+        return _SESSION_ASIA
+    return _SESSION_EU
+
+
+def _next_utc_session_boundary_ms(ms: int) -> int:
+    """Next exclusive boundary after ``ms`` at 09:00 or 22:00 UTC."""
+    dt = datetime.fromtimestamp(ms / 1000.0, tz=timezone.utc)
+    day = dt.date()
+    candidates = [
+        datetime(day.year, day.month, day.day, 9, 0, tzinfo=timezone.utc),
+        datetime(day.year, day.month, day.day, 22, 0, tzinfo=timezone.utc),
+        datetime(day.year, day.month, day.day, 9, 0, tzinfo=timezone.utc)
+        + timedelta(days=1),
+        datetime(day.year, day.month, day.day, 22, 0, tzinfo=timezone.utc)
+        + timedelta(days=1),
+    ]
+    for boundary in candidates:
+        bms = _to_ms(boundary)
+        if bms > ms:
+            return bms
+    return ms + 86_400_000
+
+
+def _iter_session_segments(
+    entry_ms: int, exit_ms: int
+) -> list[tuple[int, int, str]]:
+    """Split [entry_ms, exit_ms] into contiguous UTC session segments."""
+    if exit_ms <= entry_ms:
+        return [(entry_ms, exit_ms, _utc_session_key(entry_ms))]
+    segments: list[tuple[int, int, str]] = []
+    cursor = entry_ms
+    guard = 0
+    while cursor < exit_ms and guard < 10_000:
+        guard += 1
+        key = _utc_session_key(cursor)
+        nxt = _next_utc_session_boundary_ms(cursor)
+        end = min(exit_ms, nxt)
+        segments.append((cursor, end, key))
+        cursor = end
+    return segments
+
+
+def _floating_pnl_at(path: list[tuple[int, float]], t_ms: int) -> float:
+    """Step/linear mark from a sorted (ms, floating_gross_pnl) path."""
+    if not path:
+        return 0.0
+    if t_ms <= path[0][0]:
+        return float(path[0][1])
+    if t_ms >= path[-1][0]:
+        return float(path[-1][1])
+    for i in range(1, len(path)):
+        t0, p0 = path[i - 1]
+        t1, p1 = path[i]
+        if t_ms == t1:
+            return float(p1)
+        if t0 <= t_ms < t1:
+            if t1 == t0:
+                return float(p0)
+            w = (t_ms - t0) / (t1 - t0)
+            return float(p0) + (float(p1) - float(p0)) * w
+    return float(path[-1][1])
+
+
+def _path_series_from_trade_equity(
+    pts: list[dict[str, Any]] | None,
+    *,
+    entry_ms: int,
+    exit_ms: int,
+    gross_pnl: float,
+) -> list[tuple[int, float]]:
+    series: list[tuple[int, float]] = [(entry_ms, 0.0)]
+    if pts:
+        for p in pts:
+            t = p.get("t")
+            if not t:
+                continue
+            dt = _parse_iso(str(t))
+            if dt is None:
+                continue
+            ms = _to_ms(dt)
+            if ms < entry_ms or ms > exit_ms:
+                continue
+            series.append((ms, float(p.get("equity") or 0.0)))
+    series.append((exit_ms, float(gross_pnl)))
+    series.sort(key=lambda x: x[0])
+    # de-dupe keeping last value at each ms
+    out: list[tuple[int, float]] = []
+    for ms, pnl in series:
+        if out and out[-1][0] == ms:
+            out[-1] = (ms, pnl)
+        else:
+            out.append((ms, pnl))
+    return out
+
+
+def attribute_session_pnls(
+    filled_trades: list[dict[str, Any]],
+    trade_paths: dict[int, list[dict[str, Any]]],
+) -> dict[str, float]:
+    """Allocate each trade's gross price PnL across sessions it spans.
+
+    Commission is not split — only mark-to-market gross PnL between UTC
+    session boundaries (Asia 22→09, Europe+US 09→22).
+    """
+    sessions: dict[str, float] = {_SESSION_ASIA: 0.0, _SESSION_EU: 0.0}
+    for t in filled_trades:
+        entry_ms = t.get("entry_ms")
+        exit_ms = t.get("exit_ms")
+        gross = t.get("gross")
+        if entry_ms is None or exit_ms is None or gross is None:
+            continue
+        entry_ms = int(entry_ms)
+        exit_ms = int(exit_ms)
+        gross = float(gross)
+        tid = int(t["trade_id"])
+        path = _path_series_from_trade_equity(
+            trade_paths.get(tid),
+            entry_ms=entry_ms,
+            exit_ms=exit_ms,
+            gross_pnl=gross,
+        )
+        for start, end, key in _iter_session_segments(entry_ms, exit_ms):
+            delta = _floating_pnl_at(path, end) - _floating_pnl_at(path, start)
+            sessions[key] = sessions.get(key, 0.0) + delta
+    return {k: round(v, 2) for k, v in sessions.items()}
+
+
 def _resolve_fills_streaming(
     symbol: str,
     events: list[tuple[int, str, int, str]],
@@ -545,9 +682,15 @@ def _compute_analytics(
     losses: int,
     gross_win: float,
     gross_loss: float,
-    settings: Settings,
+    analysis_tz: str,
 ) -> dict[str, Any]:
-    """Derived statistics: streaks, duration, monthly/daily/session breakdowns."""
+    """Derived statistics: streaks, duration, monthly/daily/session breakdowns.
+
+    Monthly/daily calendar buckets use ``analysis_tz`` (Simulate page timezone).
+    Session buckets use fixed UTC windows matching equity-curve session bands:
+      Asia (Sydney+Tokyo): 22:00→09:00 UTC
+      Europe+US:           09:00→22:00 UTC
+    """
     filled = len(filled_trades)
     closed = wins + losses
 
@@ -591,11 +734,14 @@ def _compute_analytics(
             cur_win = 0
             max_loss_streak = max(max_loss_streak, cur_loss)
 
-    # Period and session grouping
+    # Period grouping (calendar in analysis_tz). Session PnL is filled later
+    # from floating paths so multi-session trades can be split.
     monthly: dict[str, dict[str, Any]] = {}
     daily: dict[str, dict[str, Any]] = {}
-    sessions: dict[str, float] = {"sydney_tokyo": 0.0, "london_newyork": 0.0}
-    tz = ZoneInfo(settings.tv_trades_tz)
+    try:
+        tz = ZoneInfo(analysis_tz)
+    except Exception:  # noqa: BLE001
+        tz = ZoneInfo("Europe/Bucharest")
 
     for t in sorted_trades:
         exit_time = t.get("exit_time")
@@ -605,8 +751,9 @@ def _compute_analytics(
         if dt is None:
             continue
         net = float(t["net"])
-        key_month = dt.strftime("%Y-%m")
-        key_day = dt.strftime("%Y-%m-%d")
+        local = dt.astimezone(tz)
+        key_month = local.strftime("%Y-%m")
+        key_day = local.strftime("%Y-%m-%d")
 
         for bucket, key in ((monthly, key_month), (daily, key_day)):
             if key not in bucket:
@@ -616,14 +763,6 @@ def _compute_analytics(
                 bucket[key]["wins"] += 1
             else:
                 bucket[key]["losses"] += 1
-
-        local = dt.astimezone(tz)
-        hour = local.hour
-        # Sydney/Tokyo 22:00-07:59, London/NY 08:00-21:59 (broker/TV TZ)
-        if hour >= 22 or hour < 8:
-            sessions["sydney_tokyo"] += net
-        else:
-            sessions["london_newyork"] += net
 
     # Side analytics
     side_analytics: dict[str, dict[str, Any]] = {}
@@ -682,7 +821,7 @@ def _compute_analytics(
             }
             for k, v in sorted(daily.items())
         ],
-        "session_pnls": {k: round(v, 2) for k, v in sessions.items()},
+        "session_pnls": {_SESSION_ASIA: 0.0, _SESSION_EU: 0.0},
     }
 
 
@@ -693,9 +832,11 @@ def apply_sizing(
     lots: float,
     commission_per_lot: float = 0.0,
     starting_balance: float = 2000.0,
+    analysis_tz: str | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_settings()
+    analysis_tz = (analysis_tz or settings.tv_trades_tz or "Europe/Bucharest").strip()
     pip = _pip_size(symbol, settings)
     contract = _contract_size(symbol)
 
@@ -840,6 +981,7 @@ def apply_sizing(
                 "trade_id": fill.trade_id,
                 "side": fill.side,
                 "net": net,
+                "gross": raw,
                 "entry_ms": fill.entry_fill_ms,
                 "exit_ms": fill.exit_fill_ms,
                 "exit_time": fill.fill_exit_time,
@@ -919,7 +1061,7 @@ def apply_sizing(
         losses=losses,
         gross_win=gross_win,
         gross_loss=gross_loss,
-        settings=settings,
+        analysis_tz=analysis_tz,
     )
 
     return {
@@ -927,6 +1069,7 @@ def apply_sizing(
         "strategy_id": "",  # filled by caller
         "settings": {
             "lots": lots,
+            "analysis_tz": analysis_tz,
             "commission_per_lot": commission_per_lot,
             "starting_balance": starting_balance,
             "contract_size": contract,
@@ -975,6 +1118,7 @@ def simulate(
     commission_per_lot: float = 7.0,
     starting_balance: float = 2000.0,
     chart_tf_minutes: int = 10,
+    analysis_tz: str | None = None,
     from_ts: str | None = None,
     to_ts: str | None = None,
     settings: Settings | None = None,
@@ -1006,6 +1150,7 @@ def simulate(
         lots=lots,
         commission_per_lot=commission_per_lot,
         starting_balance=starting_balance,
+        analysis_tz=analysis_tz,
         settings=settings,
     )
     result["strategy_id"] = strategy_id
@@ -1014,6 +1159,36 @@ def simulate(
     result["trade_equity"] = {
         str(tid): pts for tid, pts in trade_paths.items()
     }
+    # Split each trade's gross PnL across Asia / Europe+US while it was open.
+    summary = result.get("summary") or {}
+    analytics = summary.get("analytics") or {}
+    filled_for_sessions = [
+        {
+            "trade_id": f.trade_id,
+            "gross": _pnl_usd(
+                symbol,
+                f.side,
+                float(f.fill_entry_price),
+                float(f.fill_exit_price),
+                lots,
+            ),
+            "entry_ms": f.entry_fill_ms,
+            "exit_ms": f.exit_fill_ms,
+        }
+        for f in fills
+        if (
+            f.status == "ok"
+            and f.fill_entry_price is not None
+            and f.fill_exit_price is not None
+            and f.entry_fill_ms is not None
+            and f.exit_fill_ms is not None
+        )
+    ]
+    analytics["session_pnls"] = attribute_session_pnls(
+        filled_for_sessions, trade_paths
+    )
+    summary["analytics"] = analytics
+    result["summary"] = summary
     if chart_tf_minutes > 0:
         rule = (
             f"bar-close fill: TV time + {chart_tf_minutes}m | "

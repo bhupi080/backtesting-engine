@@ -132,6 +132,10 @@ def simulate(
     commission_per_lot: float = Query(7.0, ge=0.0, le=50.0),
     starting_balance: float = Query(2000.0, ge=100.0, le=1_000_000.0),
     chart_tf_minutes: int = Query(10, ge=0, le=240),
+    analysis_tz: str | None = Query(
+        None,
+        description="IANA TZ for monthly/daily analytics (Simulate page timezone)",
+    ),
 ) -> SimulateResponse:
     raw = tick_sim.simulate(
         symbol,
@@ -140,6 +144,7 @@ def simulate(
         commission_per_lot=commission_per_lot,
         starting_balance=starting_balance,
         chart_tf_minutes=chart_tf_minutes,
+        analysis_tz=analysis_tz,
         from_ts=from_ts,
         to_ts=to_ts,
     )

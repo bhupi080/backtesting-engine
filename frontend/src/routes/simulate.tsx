@@ -181,8 +181,9 @@ function SimulatePage() {
 
   // Only simulate after an explicit Run click — never on typing / focus / remount.
   // Always runs TF=0 (signal fills). When Chart TF > 0, also runs bar-close fills.
+  // analysis_tz follows the selected Time zone so monthly/daily buckets match the UI.
   const simQ = useQuery({
-    queryKey: ["simulate", committed, runKey],
+    queryKey: ["simulate", committed, runKey, timeZone],
     queryFn: async (): Promise<DualSimResult> => {
       if (!committed) throw new Error("No run config")
       const base = {
@@ -191,6 +192,7 @@ function SimulatePage() {
         lots: committed.lots,
         commission_per_lot: committed.commission,
         starting_balance: committed.balance,
+        analysis_tz: timeZone,
       }
       if (committed.chartTf <= 0) {
         const signal = await api.simulate({ ...base, chart_tf_minutes: 0 })
@@ -491,10 +493,6 @@ function SimulatePage() {
                 min={0}
                 className="w-full"
               />
-              <p className="-mt-1 text-[10px] leading-snug text-muted-foreground">
-                Minutes after the TV bar open before fill. Use 0 for signal-time
-                fills; any value above 0 also builds a comparison group.
-              </p>
               <div className="space-y-1">
                 <label className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                   Time zone
@@ -1150,6 +1148,9 @@ function SimAnalyticsPanel({
         <div className="rounded-md border bg-card p-3">
           <p className="mb-2.5 text-xs font-semibold tracking-tight">
             PnL by session
+          </p>
+          <p className="mb-2 text-[10px] text-muted-foreground">
+            Gross PnL while open in each UTC session (commission not split)
           </p>
           <div className="space-y-2">
             {Object.entries(a.session_pnls).map(([session, pnl]) => {

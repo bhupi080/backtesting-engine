@@ -612,7 +612,7 @@ export function SimOverviewPanel({
         {/* Session PnL */}
         <ChartCard
           title="Session PnL"
-          description="Asia vs Europe + US (exit time)"
+          description="Gross PnL stamped per UTC session while open (commission not split)"
         >
           {sessionData.length === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">

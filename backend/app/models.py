@@ -210,6 +210,7 @@ class SimSettings(BaseModel):
     contract_size: int
     pip_size: float
     chart_tf_minutes: int = 10
+    analysis_tz: str | None = None
 
 
 class SimulateResponse(BaseModel):

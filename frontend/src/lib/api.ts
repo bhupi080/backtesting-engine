@@ -200,6 +200,7 @@ export type SimulateResponse = {
     contract_size: number
     pip_size: number
     chart_tf_minutes: number
+    analysis_tz?: string | null
   }
   meta?: { rule?: string }
 }
@@ -271,6 +272,7 @@ export const api = {
     commission_per_lot?: number
     starting_balance?: number
     chart_tf_minutes?: number
+    analysis_tz?: string
   }) => getJson<SimulateResponse>("/simulate", p),
   createTickJob: (body: TickJobCreate) =>
     postJson<TickJob>("/ticks/jobs", body),
