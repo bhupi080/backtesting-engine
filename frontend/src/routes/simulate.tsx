@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import {
   Activity,
   ChevronDown,
+  PanelLeftClose,
+  PanelLeftOpen,
   Play,
   Search,
   Settings2,
@@ -18,7 +20,7 @@ import {
 } from "@/components/charts"
 import { LoadingState } from "@/components/loading-state"
 import { SimOverviewPanel } from "@/components/sim-overview-panel"
-import { api, type StrategyInfo } from "@/lib/api"
+import { api, type SimulateResponse, type StrategyInfo } from "@/lib/api"
 import { useFilters } from "@/lib/filters"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -39,6 +41,11 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Spinner } from "@/components/ui/spinner"
+import {
+  formatHumanDate,
+  formatHumanDateDetail,
+  formatMonthPeriod,
+} from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 export const Route = createFileRoute("/simulate")({
@@ -91,6 +98,12 @@ function pnlClass(n: number | null | undefined): string {
     : "text-rose-600 dark:text-rose-400"
 }
 
+type DualSimResult = {
+  signal: SimulateResponse
+  barClose: SimulateResponse | null
+  chartTf: number
+}
+
 function SimulatePage() {
   const { applied, selectAndApply } = useFilters()
   const [query, setQuery] = useState("")
@@ -113,7 +126,10 @@ function SimulatePage() {
   const [activeTab, setActiveTab] = useState<
     "overview" | "analytics" | "trades" | "grid"
   >("overview")
+  /** Which fill group is shown when Chart TF > 0 (both sims are always run). */
+  const [fillGroup, setFillGroup] = useState<"signal" | "barClose">("barClose")
   const [strategyPickerOpen, setStrategyPickerOpen] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(true)
 
   const strategiesQ = useQuery({
     queryKey: ["strategies"],
@@ -164,18 +180,27 @@ function SimulatePage() {
   }, [query, groups])
 
   // Only simulate after an explicit Run click — never on typing / focus / remount.
+  // Always runs TF=0 (signal fills). When Chart TF > 0, also runs bar-close fills.
   const simQ = useQuery({
     queryKey: ["simulate", committed, runKey],
-    queryFn: () => {
+    queryFn: async (): Promise<DualSimResult> => {
       if (!committed) throw new Error("No run config")
-      return api.simulate({
+      const base = {
         symbol: committed.symbol,
         strategy_id: committed.strategyId,
         lots: committed.lots,
         commission_per_lot: committed.commission,
         starting_balance: committed.balance,
-        chart_tf_minutes: committed.chartTf,
-      })
+      }
+      if (committed.chartTf <= 0) {
+        const signal = await api.simulate({ ...base, chart_tf_minutes: 0 })
+        return { signal, barClose: null, chartTf: 0 }
+      }
+      const [signal, barClose] = await Promise.all([
+        api.simulate({ ...base, chart_tf_minutes: 0 }),
+        api.simulate({ ...base, chart_tf_minutes: committed.chartTf }),
+      ])
+      return { signal, barClose, chartTf: committed.chartTf }
     },
     enabled: Boolean(committed && runKey > 0),
     staleTime: Infinity,
@@ -190,6 +215,12 @@ function SimulatePage() {
     setCommitted(null)
   }, [applied.symbol, applied.strategyId])
 
+  useEffect(() => {
+    if (!simQ.data) return
+    // Prefer bar-close group when both exist; otherwise signal-only.
+    setFillGroup(simQ.data.barClose ? "barClose" : "signal")
+  }, [simQ.data])
+
   const settingsDirty = Boolean(
     committed &&
       (committed.lots !== lots ||
@@ -200,18 +231,37 @@ function SimulatePage() {
         committed.strategyId !== applied.strategyId),
   )
 
-  const summary = simQ.data?.summary
+  const activeSim: SimulateResponse | null = useMemo(() => {
+    if (!simQ.data) return null
+    if (fillGroup === "barClose" && simQ.data.barClose) return simQ.data.barClose
+    return simQ.data.signal
+  }, [simQ.data, fillGroup])
+
+  const summary = activeSim?.summary
   const startingBalance =
-    simQ.data?.settings?.starting_balance ?? balance
+    activeSim?.settings?.starting_balance ?? balance
 
   const chartEquity = useMemo(() => {
-    const rows = simQ.data?.equity ?? []
+    const rows = activeSim?.equity ?? []
     return rows.map((p) => ({
       t: p.t,
       equity: p.equity - startingBalance,
       drawdown: p.drawdown,
     }))
-  }, [simQ.data?.equity, startingBalance])
+  }, [activeSim?.equity, startingBalance])
+
+  const hasDualGroups = Boolean(simQ.data?.barClose)
+  const signalPnl = simQ.data?.signal.summary?.sim_pnl_usd
+  const barClosePnl = simQ.data?.barClose?.summary?.sim_pnl_usd
+
+  const periodFrom = chartEquity[0]?.t
+  const periodTo =
+    chartEquity.length > 0 ? chartEquity[chartEquity.length - 1]?.t : undefined
+  const fillModeLabel = hasDualGroups
+    ? fillGroup === "signal"
+      ? "At signal · 0 min"
+      : `After bar close · ${simQ.data?.chartTf ?? chartTf} min`
+    : "At signal · 0 min"
 
   function isExpanded(symbol: string): boolean {
     if (query.trim()) return true
@@ -242,9 +292,33 @@ function SimulatePage() {
 
   return (
     <div className="flex h-[calc(100vh-3.75rem)] min-h-[28rem] flex-col gap-2">
-      <div className="grid min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-background/60 lg:grid-cols-[16rem_minmax(0,1fr)]">
-
-        <aside className="flex min-h-0 flex-col border-b border-border bg-muted/20 lg:border-r lg:border-b-0">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border bg-background/60 lg:flex-row">
+        <aside
+          data-state={sidebarOpen ? "expanded" : "collapsed"}
+          className={cn(
+            "flex min-h-0 shrink-0 flex-col overflow-hidden border-border bg-muted/20",
+            "transition-[width,max-height] duration-200 ease-linear",
+            "max-lg:border-b lg:border-r",
+            sidebarOpen
+              ? "max-h-[42%] w-full lg:max-h-none lg:w-64"
+              : "max-h-0 w-full border-transparent lg:max-h-none lg:w-0",
+          )}
+        >
+          <div className="flex h-full w-full min-w-0 flex-1 flex-col lg:min-w-64">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Setup
+            </p>
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+              title="Hide sidebar"
+              className="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <PanelLeftClose className="size-3.5" />
+              <span className="sr-only">Hide sidebar</span>
+            </button>
+          </div>
           <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
             {/* Strategy picker */}
             <div>
@@ -417,6 +491,10 @@ function SimulatePage() {
                 min={0}
                 className="w-full"
               />
+              <p className="-mt-1 text-[10px] leading-snug text-muted-foreground">
+                Minutes after the TV bar open before fill. Use 0 for signal-time
+                fills; any value above 0 also builds a comparison group.
+              </p>
               <div className="space-y-1">
                 <label className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                   Time zone
@@ -456,9 +534,9 @@ function SimulatePage() {
             </Button>
 
             <div className="mt-auto">
-              {hasRun && simQ.data?.meta?.rule ? (
+              {hasRun && activeSim?.meta?.rule ? (
                 <p className="text-[11px] text-muted-foreground">
-                  {simQ.data.meta.rule}
+                  {activeSim.meta.rule}
                   {settingsDirty ? (
                     <span className="mt-0.5 block text-amber-600 dark:text-amber-400">
                       Settings changed — click Run to re-simulate
@@ -474,30 +552,37 @@ function SimulatePage() {
               )}
             </div>
           </div>
+          </div>
         </aside>
 
-        <section className="flex min-h-0 flex-col">
-          {hasSelection ? (
-            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-2">
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-sm font-semibold">
+        <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            className={cn(
+              "flex shrink-0 items-center gap-2 overflow-hidden border-b border-border px-3 transition-[max-height,opacity,padding] duration-200 ease-linear",
+              sidebarOpen
+                ? "max-h-0 opacity-0 py-0"
+                : "max-h-10 opacity-100 py-1.5",
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              title="Show sidebar"
+              className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <PanelLeftOpen className="size-3.5" />
+              Setup
+            </button>
+            {hasSelection ? (
+              <span className="truncate text-[11px] text-muted-foreground">
+                <span className="font-mono font-semibold text-foreground">
                   {applied.symbol}
                 </span>
-                <Badge
-                  variant="secondary"
-                  className="h-5 text-[10px] text-rose-700 dark:text-rose-300"
-                >
-                  {applied.strategyId}
-                </Badge>
-              </div>
-              {settingsDirty ? (
-                <span className="text-[11px] text-amber-600 dark:text-amber-400">
-                  Settings changed — click Run to re-simulate
-                </span>
-              ) : null}
-            </div>
-          ) : null}
-
+                <span className="mx-1">/</span>
+                {applied.strategyId}
+              </span>
+            ) : null}
+          </div>
           {!hasSelection ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
               <Activity className="size-8 text-muted-foreground/40" />
@@ -524,88 +609,150 @@ function SimulatePage() {
           ) : simQ.isFetching ? (
             <LoadingState
               title="Simulating"
-              message={`Replaying ${applied.symbol} / ${applied.strategyId} on tick fills…`}
+              message={
+                committed && committed.chartTf > 0
+                  ? `Building signal-time and ${committed.chartTf}m bar-close results for ${applied.symbol} / ${applied.strategyId}…`
+                  : `Replaying ${applied.symbol} / ${applied.strategyId} on tick fills…`
+              }
             />
           ) : simQ.isError ? (
-                <div className="flex flex-1 items-center justify-center p-4">
-                  <p className="text-sm text-destructive">
-                    {String(simQ.error)}
-                  </p>
-                </div>
-              ) : simQ.data && summary ? (
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  <div className="flex shrink-0 border-b border-border bg-muted/40 px-2">
-                    {[
-                      { id: "overview", label: "Overview" },
-                      { id: "analytics", label: "Analytics" },
-                      { id: "trades", label: "Trades" },
-                      { id: "grid", label: "Trade equity curve" },
-                    ].map((tab) => (
-                      <button
-                        key={tab.id}
-                        type="button"
-                        onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                        className={cn(
-                          "relative px-3 py-2 text-[11px] font-medium tracking-wide transition-colors",
-                          activeTab === tab.id
-                            ? "text-foreground"
-                            : "text-muted-foreground hover:text-foreground",
-                        )}
+            <div className="flex flex-1 items-center justify-center p-4">
+              <p className="text-sm text-destructive">{String(simQ.error)}</p>
+            </div>
+          ) : activeSim && summary ? (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {/* Compact results header (~20% vertical budget) */}
+              <div className="shrink-0 border-b border-border px-3 py-2">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="font-mono text-xs font-semibold tracking-tight">
+                        {applied.symbol}
+                      </span>
+                      <Badge
+                        variant="secondary"
+                        className="h-4 px-1.5 text-[9px] text-rose-700 dark:text-rose-300"
                       >
-                        {tab.label}
-                        {activeTab === tab.id ? (
-                          <span className="absolute bottom-0 left-2 right-2 h-0.5 rounded-t bg-rose-500" />
-                        ) : null}
-                      </button>
-                    ))}
+                        {applied.strategyId}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground">
+                        · {fillModeLabel}
+                      </span>
+                      {settingsDirty ? (
+                        <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-700 dark:text-amber-400">
+                          Settings changed — click Run
+                        </span>
+                      ) : null}
+                    </div>
+                    {periodFrom && periodTo ? (
+                      <p className="mt-0.5 truncate text-[12px] font-medium tracking-tight">
+                        {formatHumanDate(periodFrom, timeZone)}
+                        <span className="mx-1.5 font-normal text-muted-foreground">
+                          →
+                        </span>
+                        {formatHumanDate(periodTo, timeZone)}
+                        <span className="ml-2 hidden font-normal text-muted-foreground sm:inline">
+                          {formatHumanDateDetail(periodFrom, timeZone)}
+                          <span className="mx-1">→</span>
+                          {formatHumanDateDetail(periodTo, timeZone)}
+                        </span>
+                      </p>
+                    ) : null}
                   </div>
 
-                  <div className="min-h-0 flex-1 overflow-y-auto">
-                    {activeTab === "overview" ? (
-                      <SimOverviewPanel
-                        summary={summary}
-                        equity={chartEquity}
-                        trades={simQ.data.trades}
+                  {hasDualGroups ? (
+                    <div className="grid shrink-0 grid-cols-2 gap-1.5 lg:w-[22rem]">
+                      <FillGroupCard
+                        active={fillGroup === "signal"}
+                        title="At signal"
+                        tfLabel="0m"
+                        pnl={signalPnl}
+                        onClick={() => setFillGroup("signal")}
+                      />
+                      <FillGroupCard
+                        active={fillGroup === "barClose"}
+                        title="Bar close"
+                        tfLabel={`${simQ.data?.chartTf ?? chartTf}m`}
+                        pnl={barClosePnl}
+                        onClick={() => setFillGroup("barClose")}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {/* Section tabs */}
+              <div className="flex shrink-0 gap-0.5 overflow-x-auto border-b border-border px-2">
+                {[
+                  { id: "overview", label: "Overview" },
+                  { id: "analytics", label: "Analytics" },
+                  { id: "trades", label: "Trades" },
+                  { id: "grid", label: "Equity by trade" },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    onClick={() => setActiveTab(tab.id as typeof activeTab)}
+                    className={cn(
+                      "relative shrink-0 px-3 py-1.5 text-[11px] font-medium tracking-wide transition-colors",
+                      activeTab === tab.id
+                        ? "text-foreground"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {tab.label}
+                    {activeTab === tab.id ? (
+                      <span className="absolute inset-x-2 bottom-0 h-0.5 rounded-full bg-rose-500" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {activeTab === "overview" ? (
+                  <SimOverviewPanel
+                    summary={summary}
+                    equity={chartEquity}
+                    trades={activeSim.trades}
+                    timeZone={timeZone}
+                  />
+                ) : activeTab === "analytics" ? (
+                  <SimAnalyticsPanel summary={summary} />
+                ) : activeTab === "trades" ? (
+                  <div className="flex min-h-[24rem] flex-1 flex-col pb-10">
+                    <div className="sticky top-0 z-10 flex shrink-0 items-end justify-between gap-3 border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur-sm">
+                      <div>
+                        <p className="text-sm font-medium tracking-tight">
+                          Simulated trades
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+                          {summary.filled} filled · {summary.skipped} skipped
+                        </p>
+                      </div>
+                    </div>
+                    <div className="min-h-0 flex-1">
+                      <SimTradesTable
+                        rows={activeSim.trades}
+                        tradeEquity={activeSim.trade_equity ?? {}}
                         timeZone={timeZone}
                       />
-                    ) : activeTab === "analytics" ? (
-                      <SimAnalyticsPanel summary={summary} />
-                    ) : activeTab === "trades" ? (
-                      <div className="flex min-h-[24rem] flex-1 flex-col pb-10">
-                        <div className="sticky top-0 z-10 flex shrink-0 items-end justify-between gap-3 border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur-sm">
-                          <div>
-                            <p className="text-sm font-medium tracking-tight">
-                              Simulated trades
-                            </p>
-                            <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
-                              {summary.filled} filled · {summary.skipped}{" "}
-                              skipped
-                            </p>
-                          </div>
-                        </div>
-                        <div className="min-h-0 flex-1">
-                          <SimTradesTable
-                            rows={simQ.data.trades}
-                            tradeEquity={simQ.data.trade_equity ?? {}}
-                            timeZone={timeZone}
-                          />
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex min-h-0 flex-1 flex-col">
-                        <SessionLegend timeZone={timeZone} />
-                        <div className="min-h-0 flex-1">
-                          <TradeWiseGrid
-                            tradeEquity={simQ.data.trade_equity ?? {}}
-                            trades={simQ.data.trades}
-                            timeZone={timeZone}
-                          />
-                        </div>
-                      </div>
-                    )}
+                    </div>
                   </div>
-                </div>
-              ) : null}
+                ) : (
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <SessionLegend timeZone={timeZone} />
+                    <div className="min-h-0 flex-1">
+                      <TradeWiseGrid
+                        tradeEquity={activeSim.trade_equity ?? {}}
+                        trades={activeSim.trades}
+                        timeZone={timeZone}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
         </section>
       </div>
     </div>
@@ -644,6 +791,55 @@ function Field({
         )}
       />
     </label>
+  )
+}
+
+function FillGroupCard({
+  active,
+  title,
+  tfLabel,
+  pnl,
+  onClick,
+}: {
+  active: boolean
+  title: string
+  tfLabel: string
+  pnl: number | null | undefined
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      title={title}
+      className={cn(
+        "rounded-md border px-2 py-1.5 text-left transition-all",
+        active
+          ? "border-rose-500/50 bg-rose-500/[0.08] ring-1 ring-rose-500/20"
+          : "border-border/80 bg-card/40 hover:bg-muted/40",
+      )}
+    >
+      <div className="flex items-center justify-between gap-1.5">
+        <span className="truncate text-[10px] font-medium text-muted-foreground">
+          {title}
+          <span className="ml-1 font-mono tabular-nums">· {tfLabel}</span>
+        </span>
+        {active ? (
+          <span className="shrink-0 rounded bg-rose-600/90 px-1 py-px text-[8px] font-semibold uppercase tracking-wide text-white">
+            On
+          </span>
+        ) : null}
+      </div>
+      <p
+        className={cn(
+          "mt-0.5 font-mono text-sm font-semibold tabular-nums",
+          pnlClass(pnl),
+        )}
+      >
+        {formatPnl(pnl)}
+      </p>
+    </button>
   )
 }
 
@@ -996,7 +1192,7 @@ function SimAnalyticsPanel({
                 key={m.period}
                 className="grid grid-cols-[1fr_4rem_3rem_3rem] gap-1 border-b border-border/40 py-1.5 text-[11px]"
               >
-                <span className="font-mono">{m.period}</span>
+                <span>{formatMonthPeriod(m.period, "long")}</span>
                 <span
                   className={cn(
                     "text-right font-mono font-semibold tabular-nums",

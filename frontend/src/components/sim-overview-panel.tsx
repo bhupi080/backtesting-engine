@@ -20,6 +20,7 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart"
+import { formatMonthPeriod } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 type SimSummary = NonNullable<
@@ -206,23 +207,9 @@ export function SimOverviewPanel({
     let commission = 0
     let longestWin: number | null = null
     let longestLoss: number | null = null
-    let bestTradeRunup: { tradeId: number; value: number } | null = null
-    let worstTradeDd: { tradeId: number; value: number } | null = null
 
     for (const t of filled) {
       commission += t.commission_usd ?? 0
-      if (
-        t.max_runup_usd != null &&
-        (bestTradeRunup == null || t.max_runup_usd > bestTradeRunup.value)
-      ) {
-        bestTradeRunup = { tradeId: t.trade_id, value: t.max_runup_usd }
-      }
-      if (
-        t.max_drawdown_usd != null &&
-        (worstTradeDd == null || t.max_drawdown_usd < worstTradeDd.value)
-      ) {
-        worstTradeDd = { tradeId: t.trade_id, value: t.max_drawdown_usd }
-      }
       const dur = tradeDurationMs(t)
       if (dur == null) continue
       if ((t.net_pnl_usd ?? 0) >= 0) {
@@ -254,8 +241,6 @@ export function SimOverviewPanel({
       accountMfeTime,
       accountMae,
       accountMaeTime,
-      bestTradeRunup,
-      worstTradeDd,
       longestWin,
       longestLoss,
     }
@@ -293,8 +278,9 @@ export function SimOverviewPanel({
   } satisfies ChartConfig
 
   const monthlyData = (a?.monthly_pnls ?? []).map((m) => ({
-    month: m.period.slice(2), // YY-MM → shorter
+    month: formatMonthPeriod(m.period, "short"),
     period: m.period,
+    periodLabel: formatMonthPeriod(m.period, "long"),
     pnl: m.pnl_usd,
     fill: m.pnl_usd >= 0 ? "#10b981" : "#f43f5e",
   }))
@@ -425,46 +411,6 @@ export function SimOverviewPanel({
           timeZone={timeZone}
         />
       </ChartCard>
-
-      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-        <div className="rounded-md border bg-card px-3 py-2.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Max DD (peak → trough)
-          </p>
-          <p className="mt-1 font-mono text-base font-semibold tabular-nums text-amber-600 dark:text-amber-400">
-            -${usd(Math.abs(summary.max_drawdown_usd ?? 0))}
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {usd(summary.max_drawdown_pct)}% of high-water mark
-          </p>
-        </div>
-        <div className="rounded-md border bg-card px-3 py-2.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Best trade MFE
-          </p>
-          <p className="mt-1 font-mono text-base font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-            ${usd(derived.bestTradeRunup?.value ?? 0)}
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {derived.bestTradeRunup
-              ? `Trade #${derived.bestTradeRunup.tradeId}`
-              : "—"}
-          </p>
-        </div>
-        <div className="rounded-md border bg-card px-3 py-2.5">
-          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Worst trade MAE
-          </p>
-          <p className="mt-1 font-mono text-base font-semibold tabular-nums text-rose-600 dark:text-rose-400">
-            {pnl(derived.worstTradeDd?.value ?? 0)}
-          </p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {derived.worstTradeDd
-              ? `Trade #${derived.worstTradeDd.tradeId}`
-              : "—"}
-          </p>
-        </div>
-      </div>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {/* Trades distribution donut */}
@@ -628,12 +574,16 @@ export function SimOverviewPanel({
                   cursor={false}
                   content={({ active, payload }) => {
                     const row = payload?.[0]?.payload as
-                      | { period?: string; pnl?: number; fill?: string }
+                      | {
+                          periodLabel?: string
+                          pnl?: number
+                          fill?: string
+                        }
                       | undefined
                     return (
                       <SimpleTooltip
                         active={active}
-                        label={row?.period}
+                        label={row?.periodLabel}
                         payload={
                           row?.pnl == null
                             ? []
