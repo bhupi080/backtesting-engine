@@ -1,6 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo, useRef, useState } from "react"
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react"
 import {
   Activity,
   ChevronDown,
@@ -715,7 +721,12 @@ function SimulatePage() {
                     timeZone={timeZone}
                   />
                 ) : activeTab === "analytics" ? (
-                  <SimAnalyticsPanel summary={summary} />
+                  <SimAnalyticsPanel
+                    summary={summary}
+                    trades={activeSim.trades}
+                    equity={chartEquity}
+                    timeZone={timeZone}
+                  />
                 ) : activeTab === "trades" ? (
                   <div className="flex min-h-[24rem] flex-1 flex-col pb-10">
                     <div className="sticky top-0 z-10 flex shrink-0 items-end justify-between gap-3 border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur-sm">
@@ -982,47 +993,72 @@ function formatSimTime(iso: string | null | undefined): string {
   return `${m[2]} ${m[3]}`
 }
 
-function StatTile({
+function AnalyticsKpi({
   label,
   value,
   sub,
-  positive,
+  tone = "neutral",
 }: {
   label: string
   value: string
   sub?: string
-  positive?: boolean | null
+  tone?: "up" | "down" | "neutral"
 }) {
   return (
-    <div className="rounded-md border bg-card p-2.5">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="rounded-xl border border-border/70 bg-card/80 px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">
         {label}
-      </div>
-      <div
+      </p>
+      <p
         className={cn(
-          "mt-1 font-mono text-sm font-semibold tabular-nums",
-          positive === true
-            ? "text-emerald-600 dark:text-emerald-400"
-            : positive === false
-              ? "text-rose-600 dark:text-rose-400"
-              : "text-foreground",
+          "mt-1 font-mono text-[15px] font-semibold tracking-tight tabular-nums",
+          tone === "up" && "text-emerald-600 dark:text-emerald-400",
+          tone === "down" && "text-rose-600 dark:text-rose-400",
         )}
       >
         {value}
-      </div>
+      </p>
       {sub ? (
-        <div className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
+        <p className="mt-0.5 text-[11px] tabular-nums text-muted-foreground">
           {sub}
-        </div>
+        </p>
       ) : null}
     </div>
   )
 }
 
+function AnalyticsSection({
+  title,
+  children,
+  className,
+}: {
+  title: string
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <section
+      className={cn(
+        "rounded-xl border border-border/70 bg-card/60 p-4",
+        className,
+      )}
+    >
+      <h3 className="mb-3 text-[13px] font-semibold tracking-tight">{title}</h3>
+      {children}
+    </section>
+  )
+}
+
 function SimAnalyticsPanel({
   summary,
+  trades,
+  equity,
+  timeZone,
 }: {
   summary: NonNullable<Awaited<ReturnType<typeof api.simulate>>["summary"]>
+  trades: NonNullable<Awaited<ReturnType<typeof api.simulate>>["trades"]>
+  equity: EquityPoint[]
+  timeZone: string
 }) {
   const a = summary.analytics
   if (!a) {
@@ -1035,184 +1071,417 @@ function SimAnalyticsPanel({
     )
   }
 
-  const long = a.by_side.long
-  const short = a.by_side.short
+  const commission = trades.reduce(
+    (sum, t) => sum + (t.commission_usd ?? 0),
+    0,
+  )
+
+  // Account MFE / MAE from starting balance (equity series is already PnL).
+  let accountMfe = 0
+  let accountMfeTime: string | null = null
+  let accountMae = 0
+  let accountMaeTime: string | null = null
+  for (const p of equity) {
+    if (p.equity > accountMfe) {
+      accountMfe = p.equity
+      accountMfeTime = p.t
+    }
+    if (p.equity < accountMae) {
+      accountMae = p.equity
+      accountMaeTime = p.t
+    }
+  }
+  const pfLabel =
+    summary.profit_factor == null
+      ? "∞"
+      : summary.profit_factor.toLocaleString(undefined, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+
+  const longA = a.by_side.long
+  const shortA = a.by_side.short
+  const longS = summary.by_side?.long
+  const shortS = summary.by_side?.short
+
+  const sessionRows = [
+    {
+      key: "sydney_tokyo",
+      label: "Asia",
+      detail: "Sydney + Tokyo",
+      pnl: a.session_pnls.sydney_tokyo ?? 0,
+      color: "#818cf8",
+    },
+    {
+      key: "london_newyork",
+      label: "Europe + US",
+      detail: "London + New York",
+      pnl: a.session_pnls.london_newyork ?? 0,
+      color: "#34d399",
+    },
+  ]
+  const sessionMax = Math.max(...sessionRows.map((r) => Math.abs(r.pnl)), 1)
+  const monthlyMax = Math.max(
+    ...a.monthly_pnls.map((m) => Math.abs(m.pnl_usd)),
+    1,
+  )
+
+  const durationRows = [
+    {
+      label: "Win",
+      shortest: a.shortest_win_ms,
+      average: a.avg_win_duration_ms,
+      tone: "up" as const,
+    },
+    {
+      label: "Loss",
+      shortest: a.shortest_loss_ms,
+      average: a.avg_loss_duration_ms,
+      tone: "down" as const,
+    },
+  ]
 
   return (
-    <div className="space-y-4 p-3">
-      {/* Executive strip */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-        <StatTile
-          label="Avg PnL / trade"
-          value={`$${formatUsd(a.avg_pnl_usd)}`}
-          positive={a.avg_pnl_usd > 0}
-        />
-        <StatTile
-          label="Avg win"
-          value={`$${formatUsd(a.avg_win_usd)}`}
-          positive
-          sub={`${summary.wins} wins`}
-        />
-        <StatTile
-          label="Avg loss"
-          value={`$${formatUsd(a.avg_loss_usd)}`}
-          positive={false}
-          sub={`${summary.losses} losses`}
-        />
-        <StatTile
-          label="Best trade"
-          value={`$${formatUsd(a.best_trade?.pnl_usd)}`}
-          positive={a.best_trade ? a.best_trade.pnl_usd > 0 : null}
-          sub={`#${a.best_trade?.trade_id ?? "—"}`}
-        />
-        <StatTile
-          label="Worst trade"
-          value={`$${formatUsd(a.worst_trade?.pnl_usd)}`}
-          positive={a.worst_trade ? a.worst_trade.pnl_usd > 0 : null}
-          sub={`#${a.worst_trade?.trade_id ?? "—"}`}
-        />
-        <StatTile
-          label="Max streak"
-          value={`${a.max_consecutive_wins}W / ${a.max_consecutive_losses}L`}
-        />
+    <div className="space-y-5 p-4 pb-8">
+      {/* 1. Summary KPIs */}
+      <div>
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+          Summary
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+          <AnalyticsKpi
+            label="Avg / trade"
+            value={`$${formatUsd(a.avg_pnl_usd)}`}
+            tone={
+              a.avg_pnl_usd > 0 ? "up" : a.avg_pnl_usd < 0 ? "down" : "neutral"
+            }
+          />
+          <AnalyticsKpi
+            label="Avg win"
+            value={`$${formatUsd(a.avg_win_usd)}`}
+            sub={`${summary.wins} wins`}
+            tone="up"
+          />
+          <AnalyticsKpi
+            label="Avg loss"
+            value={`$${formatUsd(a.avg_loss_usd)}`}
+            sub={`${summary.losses} losses`}
+            tone="down"
+          />
+          <AnalyticsKpi
+            label="Best"
+            value={formatPnl(a.best_trade?.pnl_usd)}
+            sub={a.best_trade ? `Trade #${a.best_trade.trade_id}` : undefined}
+            tone="up"
+          />
+          <AnalyticsKpi
+            label="Worst"
+            value={formatPnl(a.worst_trade?.pnl_usd)}
+            sub={
+              a.worst_trade ? `Trade #${a.worst_trade.trade_id}` : undefined
+            }
+            tone="down"
+          />
+          <AnalyticsKpi
+            label="Max streak"
+            value={`${a.max_consecutive_wins}W / ${a.max_consecutive_losses}L`}
+          />
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {/* Duration */}
-        <div className="rounded-md border bg-card p-3">
-          <p className="mb-2.5 text-xs font-semibold tracking-tight">
-            Duration analysis
-          </p>
-          <div className="grid grid-cols-2 gap-2">
-            <StatTile
-              label="Shortest win"
-              value={formatDuration(a.shortest_win_ms)}
-              positive
-            />
-            <StatTile
-              label="Shortest loss"
-              value={formatDuration(a.shortest_loss_ms)}
-              positive={false}
-            />
-            <StatTile
-              label="Avg win duration"
-              value={formatDuration(a.avg_win_duration_ms)}
-              positive
-            />
-            <StatTile
-              label="Avg loss duration"
-              value={formatDuration(a.avg_loss_duration_ms)}
-              positive={false}
-            />
-          </div>
+      {/* 2. Performance */}
+      <div>
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-muted-foreground">
+          Performance
+        </p>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+          <AnalyticsKpi
+            label="Total PnL"
+            value={formatPnl(summary.sim_pnl_usd)}
+            sub={`${formatPnl(summary.return_pct)}% return`}
+            tone={
+              summary.sim_pnl_usd > 0
+                ? "up"
+                : summary.sim_pnl_usd < 0
+                  ? "down"
+                  : "neutral"
+            }
+          />
+          <AnalyticsKpi
+            label="Win rate"
+            value={`${(summary.win_rate * 100).toFixed(1)}%`}
+            sub={`${summary.wins}W / ${summary.losses}L`}
+            tone={summary.win_rate >= 0.5 ? "up" : "down"}
+          />
+          <AnalyticsKpi label="Profit factor" value={pfLabel} />
+          <AnalyticsKpi
+            label="MFE"
+            value={`$${formatUsd(accountMfe)}`}
+            sub={
+              formatHumanDateDetail(accountMfeTime, timeZone) ??
+              "max favorable from start"
+            }
+            tone="up"
+          />
+          <AnalyticsKpi
+            label="MAE"
+            value={formatPnl(accountMae)}
+            sub={
+              formatHumanDateDetail(accountMaeTime, timeZone) ??
+              "max adverse from start"
+            }
+            tone="down"
+          />
+          <AnalyticsKpi
+            label="Commission"
+            value={`$${formatUsd(commission)}`}
+            sub="round-trip total"
+          />
+          <AnalyticsKpi
+            label="Trades"
+            value={`${summary.filled}`}
+            sub={`${summary.skipped} skipped`}
+          />
+          <AnalyticsKpi
+            label="vs TradingView"
+            value={formatPnl(summary.pnl_diff_usd)}
+            sub={`TV ${formatPnl(summary.tv_pnl_usd)}`}
+            tone={
+              summary.pnl_diff_usd > 0
+                ? "up"
+                : summary.pnl_diff_usd < 0
+                  ? "down"
+                  : "neutral"
+            }
+          />
         </div>
+      </div>
 
-        {/* Long vs Short deep dive */}
-        <div className="rounded-md border bg-card p-3">
-          <p className="mb-2.5 text-xs font-semibold tracking-tight">
-            Long vs Short analytics
-          </p>
-          <div className="space-y-2">
-            <div className="grid grid-cols-4 gap-2 rounded-md bg-emerald-500/[0.06] px-2 py-1.5 text-[11px]">
-              <span className="font-semibold text-emerald-700 dark:text-emerald-400">
-                LONG
-              </span>
-              <span className="text-right font-mono tabular-nums">
-                avg ${formatUsd(long?.avg_pnl_usd)}
-              </span>
-              <span className="text-right font-mono tabular-nums text-emerald-600">
-                +${formatUsd(long?.biggest_win_usd)}
-              </span>
-              <span className="text-right font-mono tabular-nums text-rose-600">
-                ${formatUsd(long?.biggest_loss_usd)}
-              </span>
-            </div>
-            <div className="grid grid-cols-4 gap-2 rounded-md bg-rose-500/[0.06] px-2 py-1.5 text-[11px]">
-              <span className="font-semibold text-rose-600 dark:text-rose-400">
-                SHORT
-              </span>
-              <span className="text-right font-mono tabular-nums">
-                avg ${formatUsd(short?.avg_pnl_usd)}
-              </span>
-              <span className="text-right font-mono tabular-nums text-emerald-600">
-                +${formatUsd(short?.biggest_win_usd)}
-              </span>
-              <span className="text-right font-mono tabular-nums text-rose-600">
-                ${formatUsd(short?.biggest_loss_usd)}
-              </span>
-            </div>
-          </div>
-        </div>
-
-        {/* Session PnL */}
-        <div className="rounded-md border bg-card p-3">
-          <p className="mb-2.5 text-xs font-semibold tracking-tight">
-            PnL by session
-          </p>
-          <p className="mb-2 text-[10px] text-muted-foreground">
-            Gross PnL while open in each UTC session (commission not split)
-          </p>
-          <div className="space-y-2">
-            {Object.entries(a.session_pnls).map(([session, pnl]) => {
-              const label =
-                session === "sydney_tokyo" ? "Sydney / Tokyo" : "London / NY"
-              return (
-                <div
-                  key={session}
-                  className="flex items-center justify-between rounded-md border px-2.5 py-1.5"
+      {/* 3. Long vs Short */}
+      <AnalyticsSection title="Long vs Short">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {(
+            [
+              {
+                key: "long",
+                title: "Long",
+                accent: "text-emerald-700 dark:text-emerald-400",
+                ring: "border-emerald-500/20 bg-emerald-500/[0.05]",
+                avg: longA?.avg_pnl_usd,
+                best: longA?.biggest_win_usd,
+                worst: longA?.biggest_loss_usd,
+                filled: longS?.filled,
+                pnl: longS?.pnl_usd,
+                winRate: longS?.win_rate,
+                pf: longS?.profit_factor,
+              },
+              {
+                key: "short",
+                title: "Short",
+                accent: "text-rose-700 dark:text-rose-400",
+                ring: "border-rose-500/20 bg-rose-500/[0.05]",
+                avg: shortA?.avg_pnl_usd,
+                best: shortA?.biggest_win_usd,
+                worst: shortA?.biggest_loss_usd,
+                filled: shortS?.filled,
+                pnl: shortS?.pnl_usd,
+                winRate: shortS?.win_rate,
+                pf: shortS?.profit_factor,
+              },
+            ] as const
+          ).map((side) => (
+            <div
+              key={side.key}
+              className={cn("rounded-lg border px-3 py-3", side.ring)}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className={cn("text-[13px] font-semibold", side.accent)}>
+                  {side.title}
+                </p>
+                {side.filled != null ? (
+                  <span className="text-[10px] tabular-nums text-muted-foreground">
+                    {side.filled} trades
+                    {side.winRate != null
+                      ? ` · ${(side.winRate * 100).toFixed(0)}% WR`
+                      : ""}
+                  </span>
+                ) : null}
+              </div>
+              {side.pnl != null ? (
+                <p
+                  className={cn(
+                    "mt-1.5 font-mono text-lg font-semibold tabular-nums",
+                    pnlClass(side.pnl),
+                  )}
                 >
-                  <span className="text-[11px] font-medium">{label}</span>
+                  {formatPnl(side.pnl)}
+                </p>
+              ) : null}
+              <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 text-[11px]">
+                <span className="text-muted-foreground">Average</span>
+                <span className="text-right font-mono tabular-nums">
+                  ${formatUsd(side.avg)}
+                </span>
+                <span className="text-muted-foreground">Best</span>
+                <span className="text-right font-mono tabular-nums text-emerald-600 dark:text-emerald-400">
+                  {formatPnl(side.best)}
+                </span>
+                <span className="text-muted-foreground">Worst</span>
+                <span className="text-right font-mono tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatPnl(side.worst)}
+                </span>
+                <span className="text-muted-foreground">Profit factor</span>
+                <span className="text-right font-mono tabular-nums">
+                  {side.pf == null
+                    ? "∞"
+                    : side.pf.toLocaleString(undefined, {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </AnalyticsSection>
+
+      {/* 4. Sessions + 5. Duration */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <AnalyticsSection title="Session PnL">
+          <div className="space-y-4">
+            {sessionRows.map((row) => (
+              <div key={row.key}>
+                <div className="mb-1.5 flex items-baseline justify-between gap-2">
+                  <div>
+                    <p className="text-[12px] font-medium">{row.label}</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      {row.detail}
+                    </p>
+                  </div>
                   <span
                     className={cn(
                       "font-mono text-sm font-semibold tabular-nums",
-                      pnlClass(pnl),
+                      pnlClass(row.pnl),
                     )}
                   >
-                    {formatPnl(pnl)}
+                    {formatPnl(row.pnl)}
+                  </span>
+                </div>
+                <div className="h-2 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full transition-[width] duration-300"
+                    style={{
+                      width: `${(Math.abs(row.pnl) / sessionMax) * 100}%`,
+                      backgroundColor: row.color,
+                    }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </AnalyticsSection>
+
+        <AnalyticsSection title="Duration">
+          <div className="grid grid-cols-2 gap-3">
+            {durationRows.map((row) => (
+              <div
+                key={row.label}
+                className={cn(
+                  "rounded-lg border px-3 py-2.5",
+                  row.tone === "up"
+                    ? "border-emerald-500/20 bg-emerald-500/[0.05]"
+                    : "border-rose-500/20 bg-rose-500/[0.05]",
+                )}
+              >
+                <p
+                  className={cn(
+                    "text-[11px] font-semibold uppercase tracking-wide",
+                    row.tone === "up"
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : "text-rose-700 dark:text-rose-400",
+                  )}
+                >
+                  {row.label}
+                </p>
+                <div className="mt-2 space-y-2">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground">
+                      Shortest
+                    </span>
+                    <span className="font-mono text-[12px] font-semibold tabular-nums">
+                      {formatDuration(row.shortest)}
+                    </span>
+                  </div>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="text-[11px] text-muted-foreground">
+                      Average
+                    </span>
+                    <span className="font-mono text-[12px] font-semibold tabular-nums">
+                      {formatDuration(row.average)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </AnalyticsSection>
+      </div>
+
+      {/* 6. Monthly */}
+      <AnalyticsSection title="Monthly PnL">
+        {a.monthly_pnls.length === 0 ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            No monthly data
+          </p>
+        ) : (
+          <div className="space-y-2.5">
+            {a.monthly_pnls.map((m) => {
+              const pct =
+                monthlyMax > 0 ? (Math.abs(m.pnl_usd) / monthlyMax) * 100 : 0
+              return (
+                <div
+                  key={m.period}
+                  className="flex items-center gap-3 rounded-lg border border-border/50 bg-background/40 px-3 py-2"
+                >
+                  <div className="w-[6.75rem] shrink-0">
+                    <p className="truncate text-[12px] font-medium leading-tight">
+                      {formatMonthPeriod(m.period, "short")}
+                    </p>
+                    <p className="mt-0.5 text-[10px] tabular-nums text-muted-foreground">
+                      <span className="text-emerald-600 dark:text-emerald-400">
+                        {m.wins}W
+                      </span>
+                      <span className="mx-1 opacity-40">·</span>
+                      <span className="text-rose-600 dark:text-rose-400">
+                        {m.losses}L
+                      </span>
+                    </p>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="h-2 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className={cn(
+                          "h-full rounded-full",
+                          m.pnl_usd >= 0 ? "bg-emerald-500" : "bg-rose-500",
+                        )}
+                        style={{ width: `${pct}%` }}
+                      />
+                    </div>
+                  </div>
+                  <span
+                    className={cn(
+                      "w-[4.75rem] shrink-0 text-right font-mono text-[12px] font-semibold tabular-nums",
+                      pnlClass(m.pnl_usd),
+                    )}
+                  >
+                    {formatPnl(m.pnl_usd)}
                   </span>
                 </div>
               )
             })}
           </div>
-        </div>
-
-        {/* Monthly PnL */}
-        <div className="rounded-md border bg-card p-3">
-          <p className="mb-2.5 text-xs font-semibold tracking-tight">
-            Monthly PnL
-          </p>
-          <div className="max-h-48 overflow-auto">
-            <div className="grid grid-cols-[1fr_4rem_3rem_3rem] gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              <span>Month</span>
-              <span className="text-right">PnL</span>
-              <span className="text-right">W</span>
-              <span className="text-right">L</span>
-            </div>
-            {a.monthly_pnls.map((m) => (
-              <div
-                key={m.period}
-                className="grid grid-cols-[1fr_4rem_3rem_3rem] gap-1 border-b border-border/40 py-1.5 text-[11px]"
-              >
-                <span>{formatMonthPeriod(m.period, "long")}</span>
-                <span
-                  className={cn(
-                    "text-right font-mono font-semibold tabular-nums",
-                    pnlClass(m.pnl_usd),
-                  )}
-                >
-                  {formatPnl(m.pnl_usd)}
-                </span>
-                <span className="text-right font-mono text-emerald-600">
-                  {m.wins}
-                </span>
-                <span className="text-right font-mono text-rose-600">
-                  {m.losses}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
+        )}
+      </AnalyticsSection>
     </div>
   )
 }
