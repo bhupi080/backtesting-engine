@@ -1862,14 +1862,6 @@ function SimTradesTable({
             ? `${formatSimTime(zoomedRow.fill_entry_time)} → ${formatSimTime(zoomedRow.fill_exit_time)}`
             : undefined
         }
-        extremum={
-          zoomedRow
-            ? {
-                maxRunup: zoomedRow.max_runup_usd,
-                maxDrawdown: zoomedRow.max_drawdown_usd,
-              }
-            : undefined
-        }
       />
     </>
   )

@@ -563,7 +563,9 @@ def compute_excursions(
         agg AS (
           SELECT trade_id, entry_ms, exit_ms, entry_px, direction,
                  min(price) AS min_px,
-                 max(price) AS max_px
+                 max(price) AS max_px,
+                 arg_min(timestamp_ms, price) AS min_px_ts,
+                 arg_max(timestamp_ms, price) AS max_px_ts
           FROM matched
           GROUP BY trade_id, entry_ms, exit_ms, entry_px, direction
         ),
@@ -585,11 +587,13 @@ def compute_excursions(
           GROUP BY trade_id, entry_px, direction, 4
         )
         SELECT 'agg' AS kind, trade_id, entry_ms, exit_ms, entry_px, direction,
-               min_px, max_px, NULL::BIGINT AS ts_ms, NULL::DOUBLE AS price
+               min_px, max_px, min_px_ts, max_px_ts,
+               NULL::BIGINT AS ts_ms, NULL::DOUBLE AS price
         FROM agg
         UNION ALL
         SELECT 'pt' AS kind, trade_id, NULL::BIGINT, NULL::BIGINT, entry_px, direction,
-               NULL::DOUBLE, NULL::DOUBLE, ts_ms, price
+               NULL::DOUBLE, NULL::DOUBLE, NULL::BIGINT, NULL::BIGINT,
+               ts_ms, price
         FROM buckets
         ORDER BY kind, trade_id, ts_ms
     """
@@ -602,6 +606,8 @@ def compute_excursions(
     excursions: dict[int, dict[str, float]] = {}
     paths: dict[int, list[dict[str, Any]]] = {}
     path_raw: dict[int, list[tuple[int, float]]] = {}
+    # True tick extrema points to inject into the sampled path so charts match table MFE/MAE.
+    extreme_pts: dict[int, list[tuple[int, float]]] = {}
 
     for row in rows:
         tid = int(row["trade_id"])
@@ -610,18 +616,32 @@ def compute_excursions(
         if row["kind"] == "agg":
             min_px = float(row["min_px"])
             max_px = float(row["max_px"])
+            min_px_ts = int(row["min_px_ts"]) if row["min_px_ts"] is not None else None
+            max_px_ts = int(row["max_px_ts"]) if row["max_px_ts"] is not None else None
             if direction == "long":
                 fav_px, adv_px = max_px, min_px
+                fav_ts, adv_ts = max_px_ts, min_px_ts
             else:
                 fav_px, adv_px = min_px, max_px
+                fav_ts, adv_ts = min_px_ts, max_px_ts
+            # Clamp to entry baseline (0): MFE never negative, MAE never positive.
+            runup = max(
+                0.0, round(_pnl_usd(symbol, direction, entry_px, fav_px, lots), 2)
+            )
+            drawdown = min(
+                0.0, round(_pnl_usd(symbol, direction, entry_px, adv_px, lots), 2)
+            )
             excursions[tid] = {
-                "max_runup_usd": round(
-                    _pnl_usd(symbol, direction, entry_px, fav_px, lots), 2
-                ),
-                "max_drawdown_usd": round(
-                    _pnl_usd(symbol, direction, entry_px, adv_px, lots), 2
-                ),
+                "max_runup_usd": runup,
+                "max_drawdown_usd": drawdown,
             }
+            pts: list[tuple[int, float]] = []
+            if fav_ts is not None and runup > 0:
+                pts.append((fav_ts, runup))
+            if adv_ts is not None and drawdown < 0:
+                pts.append((adv_ts, drawdown))
+            if pts:
+                extreme_pts[tid] = pts
             continue
 
         if row["ts_ms"] is None or row["price"] is None:
@@ -630,7 +650,8 @@ def compute_excursions(
         pnl = _pnl_usd(symbol, direction, entry_px, float(row["price"]), lots)
         path_raw.setdefault(tid, []).append((ts_ms, pnl))
 
-    for tid, samples in path_raw.items():
+    all_tids = set(path_raw) | set(extreme_pts) | set(excursions)
+    for tid in all_tids:
         fill = fill_by_id.get(tid)
         if not fill or fill.entry_fill_ms is None:
             continue
@@ -639,37 +660,37 @@ def compute_excursions(
         direction = fill.side
         entry_px = float(fill.fill_entry_price or 0.0)
 
-        samples.sort(key=lambda x: x[0])
-        series: list[tuple[int, float]] = [(entry_ms, 0.0)]
-        for ts, pnl in samples:
-            if ts <= entry_ms:
-                continue
-            series.append((ts, pnl))
+        by_ts: dict[int, float] = {}
+        by_ts[entry_ms] = 0.0
+        for ts, pnl in path_raw.get(tid, []):
+            if entry_ms < ts <= exit_ms:
+                by_ts[ts] = pnl
         if fill.fill_exit_price is not None:
-            end_pnl = _pnl_usd(
+            by_ts[exit_ms] = _pnl_usd(
                 symbol, direction, entry_px, float(fill.fill_exit_price), lots
             )
-            if not series or series[-1][0] != exit_ms:
-                series.append((exit_ms, end_pnl))
-            else:
-                series[-1] = (exit_ms, end_pnl)
-
-        peak = 0.0
-        pts: list[dict[str, Any]] = []
-        seen: set[int] = set()
-        for ts, pnl in series:
-            if ts in seen:
+        # Exact tick extrema last so chart MFE/MAE match the table.
+        # If an extreme lands on entry_ms, shift +1ms so the entry baseline (0) remains.
+        for ts, pnl in extreme_pts.get(tid, []):
+            if ts < entry_ms or ts > exit_ms:
                 continue
-            seen.add(ts)
+            if ts == entry_ms and pnl != 0.0:
+                ts = entry_ms + 1 if entry_ms + 1 <= exit_ms else entry_ms
+            by_ts[ts] = pnl
+
+        series = sorted(by_ts.items(), key=lambda x: x[0])
+        peak = 0.0
+        pts_out: list[dict[str, Any]] = []
+        for ts, pnl in series:
             peak = max(peak, pnl)
-            pts.append(
+            pts_out.append(
                 {
                     "t": _fmt_ms(ts),
                     "equity": round(pnl, 2),
                     "drawdown": round(peak - pnl, 2),
                 }
             )
-        paths[tid] = pts
+        paths[tid] = pts_out
 
     return excursions, paths
 

@@ -99,12 +99,18 @@ function useExtremumDots(
   extremum: ExtremumStats | undefined,
 ) {
   const derived = useMemo(() => deriveExtremum(equity), [equity])
-  const stats: Required<ExtremumStats> = {
-    maxRunup: extremum?.maxRunup ?? derived.maxRunup,
-    maxDrawdown: extremum?.maxDrawdown ?? derived.maxDrawdown,
-    maxRunupTime: extremum?.maxRunupTime ?? derived.maxRunupTime,
-    maxDrawdownTime: extremum?.maxDrawdownTime ?? derived.maxDrawdownTime,
-  }
+  // Prefer a consistent source: if caller overrides values without times,
+  // still use path-derived extrema so dots and cards match the drawn curve.
+  const hasTimedOverride =
+    extremum?.maxRunupTime != null || extremum?.maxDrawdownTime != null
+  const stats: Required<ExtremumStats> = hasTimedOverride
+    ? {
+        maxRunup: extremum?.maxRunup ?? derived.maxRunup,
+        maxDrawdown: extremum?.maxDrawdown ?? derived.maxDrawdown,
+        maxRunupTime: extremum?.maxRunupTime ?? derived.maxRunupTime,
+        maxDrawdownTime: extremum?.maxDrawdownTime ?? derived.maxDrawdownTime,
+      }
+    : derived
 
   const dots = useMemo(() => {
     const runupMs = stats.maxRunupTime ? Date.parse(stats.maxRunupTime) : NaN
