@@ -22,7 +22,7 @@ from app.models import (
     TickJobCreateRequest,
     TickJobResponse,
 )
-from app import tick_sim, ticks_service, trades_service
+from app import risk_reward, tick_sim, ticks_service, trades_service
 from app.tick_download import jobs as tick_jobs
 from app.tick_download.jobs import TickJobCreate
 
@@ -165,6 +165,40 @@ def symbol_detail(symbol: str) -> SymbolStub:
 @app.get("/compare", response_model=CompareStub)
 def compare() -> CompareStub:
     return CompareStub()
+
+
+@app.get("/risk-reward", response_model=SimulateResponse)
+def risk_reward_sim(
+    symbol: str = Query(...),
+    strategy_id: str = Query(...),
+    from_ts: str | None = Query(None, alias="from"),
+    to_ts: str | None = Query(None, alias="to"),
+    lots: float = Query(0.1, ge=0.01, le=10.0),
+    commission_per_lot: float = Query(7.0, ge=0.0, le=50.0),
+    starting_balance: float = Query(2000.0, ge=100.0, le=1_000_000.0),
+    chart_tf_minutes: int = Query(10, ge=0, le=240),
+    analysis_tz: str | None = Query(None),
+    atr_bar_minutes: int = Query(10, ge=1, le=1440),
+    atr_period: int = Query(14, ge=2, le=500),
+    tp_atr_mult: float = Query(2.0, gt=0.0, le=50.0),
+    sl_atr_mult: float = Query(1.0, gt=0.0, le=50.0),
+) -> SimulateResponse:
+    raw = risk_reward.simulate_risk_reward(
+        symbol,
+        strategy_id,
+        lots=lots,
+        commission_per_lot=commission_per_lot,
+        starting_balance=starting_balance,
+        chart_tf_minutes=chart_tf_minutes,
+        analysis_tz=analysis_tz,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        atr_bar_minutes=atr_bar_minutes,
+        atr_period=atr_period,
+        tp_atr_mult=tp_atr_mult,
+        sl_atr_mult=sl_atr_mult,
+    )
+    return SimulateResponse(**raw)
 
 
 @app.get("/market-hours/symbols", response_model=list[str])

@@ -129,12 +129,17 @@ class SimTradeResult(BaseModel):
     commission_usd: float | None = None
     max_runup_usd: float | None = None
     max_drawdown_usd: float | None = None
+    atr: float | None = None
+    tp_price: float | None = None
+    sl_price: float | None = None
+    exit_reason: str | None = None
 
 
 class EquityPoint(BaseModel):
     t: str
     equity: float
     drawdown: float = 0.0
+    exit_reason: str | None = None
 
 
 class SideSummary(BaseModel):
@@ -211,6 +216,10 @@ class SimSettings(BaseModel):
     pip_size: float
     chart_tf_minutes: int = 10
     analysis_tz: str | None = None
+    atr_bar_minutes: int | None = None
+    atr_period: int | None = None
+    tp_atr_mult: float | None = None
+    sl_atr_mult: float | None = None
 
 
 class SimulateResponse(BaseModel):

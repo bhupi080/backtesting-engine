@@ -184,16 +184,45 @@ function SimpleTooltip({
   )
 }
 
+function ExitLegend({ equity }: { equity: EquityPoint[] }) {
+  const counts = { tp: 0, sl: 0, signal: 0 }
+  for (const p of equity) {
+    if (p.exitReason === "tp") counts.tp += 1
+    else if (p.exitReason === "sl") counts.sl += 1
+    else if (p.exitReason === "signal") counts.signal += 1
+  }
+  const total = counts.tp + counts.sl + counts.signal
+  if (total === 0) return null
+  const items = [
+    { label: "Take profit", dot: "bg-emerald-500" },
+    { label: "Stop", dot: "bg-rose-500" },
+    { label: "CSV exit", dot: "bg-amber-500" },
+  ]
+  return (
+    <div className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+      {items.map((item) => (
+        <span key={item.label} className="inline-flex items-center gap-1.5">
+          <span className={cn("size-2 rounded-full", item.dot)} />
+          {item.label}
+        </span>
+      ))}
+    </div>
+  )
+}
+
 export function SimOverviewPanel({
   summary,
   equity,
   trades,
   timeZone,
+  hideKpis = false,
 }: {
   summary: SimSummary
   equity: EquityPoint[]
   trades: SimTrade[]
   timeZone: string
+  /** Skip the headline metric row when the page already shows those totals. */
+  hideKpis?: boolean
 }) {
   const filled = useMemo(
     () =>
@@ -356,7 +385,7 @@ export function SimOverviewPanel({
 
   return (
     <div className="space-y-4 p-3 pb-8">
-      {/* KPI metrics */}
+      {hideKpis ? null : (
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         <MetricCard
           label="Total PnL"
@@ -398,12 +427,14 @@ export function SimOverviewPanel({
           sub={`${summary.wins}W / ${summary.losses}L`}
         />
       </div>
+      )}
 
       {/* Equity curve */}
       <ChartCard
         title="Account equity"
         description={`Ending $${usd(summary.ending_equity)} · ${pnl(summary.return_pct)}% return`}
       >
+        <ExitLegend equity={equity} />
         <PreciseEquityCurveChart
           equity={equity}
           emptyMessage="No equity points (no tick fills)"

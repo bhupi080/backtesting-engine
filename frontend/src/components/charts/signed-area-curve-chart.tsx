@@ -59,10 +59,17 @@ export type SignedAreaCurveChartProps = {
 const COLORS = {
   green: "#22c55e",
   red: "#ef4444",
+  amber: "#f59e0b",
   grid: "#bfbfbfff",
   tick: "#666",
   cursor: "#bfbfbf",
 } as const
+
+const EXIT_DOT: Record<string, string> = {
+  "Take profit": COLORS.green,
+  Stop: COLORS.red,
+  "CSV exit": COLORS.amber,
+}
 
 const defaultFormatUsd = (n: number) =>
   new Intl.NumberFormat("en-US", {
@@ -187,6 +194,21 @@ export function SignedAreaCurveChart({
         timeZone,
       })
   }, [xDomain, timeZone])
+
+  const exitDots = useMemo(() => {
+    return displayData.flatMap((p) => {
+      const exit = p.meta?.Exit
+      if (typeof exit !== "string" || EXIT_DOT[exit] == null) return []
+      return [
+        {
+          key: `${p.time}-${exit}`,
+          time: p.time,
+          pnl: p.pnl,
+          fill: EXIT_DOT[exit],
+        },
+      ]
+    })
+  }, [displayData])
 
   const markers = useMemo(() => {
     if (!showExtremumDots || displayData.length === 0) {
@@ -435,20 +457,49 @@ export function SignedAreaCurveChart({
             ifOverflow="extendDomain"
           />
         ) : null}
+        {exitDots.map((dot) => (
+          <ReferenceDot
+            key={dot.key}
+            x={dot.time}
+            y={dot.pnl}
+            r={3.5}
+            fill={dot.fill}
+            stroke="#fff"
+            strokeWidth={1}
+            ifOverflow="extendDomain"
+          />
+        ))}
       </AreaChart>
     </ChartContainer>
   )
 }
 
 /** Map simulate API equity rows → CurvePoint[] */
+const EXIT_LABEL: Record<string, string> = {
+  tp: "Take profit",
+  sl: "Stop",
+  signal: "CSV exit",
+}
+
 export function equityToCurvePoints(
-  equity: { t: string; equity: number; drawdown?: number }[],
+  equity: {
+    t: string
+    equity: number
+    drawdown?: number
+    exitReason?: string | null
+  }[],
 ): CurvePoint[] {
-  return equity.map((p) => ({
-    t: p.t,
-    value: p.equity,
-    meta: p.drawdown != null ? { Drawdown: p.drawdown } : undefined,
-  }))
+  return equity.map((p) => {
+    const meta: Record<string, number | string | null | undefined> = {}
+    if (p.drawdown != null) meta.Drawdown = p.drawdown
+    const exit = p.exitReason ? EXIT_LABEL[p.exitReason] : undefined
+    if (exit) meta.Exit = exit
+    return {
+      t: p.t,
+      value: p.equity,
+      meta: Object.keys(meta).length > 0 ? meta : undefined,
+    }
+  })
 }
 
 /** Map price series to Δ from first price (signed area around 0). */

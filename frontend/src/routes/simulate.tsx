@@ -1049,7 +1049,7 @@ function AnalyticsSection({
   )
 }
 
-function SimAnalyticsPanel({
+export function SimAnalyticsPanel({
   summary,
   trades,
   equity,

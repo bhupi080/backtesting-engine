@@ -13,6 +13,8 @@ export type EquityPoint = {
   t: string
   equity: number
   drawdown?: number
+  /** tp | sl | signal — drawn on the account curve when present */
+  exitReason?: string | null
 }
 
 export type ExtremumStats = {

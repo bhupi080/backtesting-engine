@@ -2,7 +2,7 @@ import {
   Activity,
   BarChart3,
   Database,
-  GitCompare,
+  Scale,
   Home,
   type LucideIcon,
 } from "lucide-react"
@@ -46,8 +46,8 @@ export function pageMetaForPath(pathname: string): PageMeta {
   }
   if (pathname.startsWith("/compare")) {
     return {
-      title: "Compare",
-      icon: GitCompare,
+      title: "Risk / Reward",
+      icon: Scale,
       iconClass: "text-orange-500 dark:text-orange-400",
     }
   }

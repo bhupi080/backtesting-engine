@@ -3,7 +3,7 @@ import {
   Activity,
   BarChart3,
   Database,
-  GitCompare,
+  Scale,
   Home,
   type LucideIcon,
 } from "lucide-react"
@@ -35,7 +35,7 @@ const nav: {
   { to: "/datasets", label: "Datasets", icon: Database, color: "text-emerald-400" },
   { to: "/trades", label: "Trades", icon: BarChart3, color: "text-violet-400" },
   { to: "/simulate", label: "Simulate", icon: Activity, color: "text-rose-400" },
-  { to: "/compare", label: "Compare", icon: GitCompare, color: "text-orange-400" },
+  { to: "/compare", label: "Risk / Reward", icon: Scale, color: "text-orange-400" },
 ]
 
 export function AppSidebar() {

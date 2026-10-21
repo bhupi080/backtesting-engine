@@ -131,8 +131,12 @@ export type SimulateResponse = {
     commission_usd?: number | null
     max_runup_usd?: number | null
     max_drawdown_usd?: number | null
+    atr?: number | null
+    tp_price?: number | null
+    sl_price?: number | null
+    exit_reason?: string | null
   }[]
-  equity: { t: string; equity: number; drawdown: number }[]
+  equity: { t: string; equity: number; drawdown: number; exit_reason?: string | null }[]
   /** trade_id → intra-trade floating PnL path */
   trade_equity?: Record<string, { t: string; equity: number; drawdown: number }[]>
   summary?: {
@@ -201,8 +205,12 @@ export type SimulateResponse = {
     pip_size: number
     chart_tf_minutes: number
     analysis_tz?: string | null
+    atr_bar_minutes?: number | null
+    atr_period?: number | null
+    tp_atr_mult?: number | null
+    sl_atr_mult?: number | null
   }
-  meta?: { rule?: string }
+  meta?: { rule?: string; exits?: Record<string, number> }
 }
 
 export type TickJob = {
@@ -274,6 +282,21 @@ export const api = {
     chart_tf_minutes?: number
     analysis_tz?: string
   }) => getJson<SimulateResponse>("/simulate", p),
+  riskReward: (p: {
+    symbol: string
+    strategy_id: string
+    from?: string
+    to?: string
+    lots?: number
+    commission_per_lot?: number
+    starting_balance?: number
+    chart_tf_minutes?: number
+    analysis_tz?: string
+    atr_bar_minutes?: number
+    atr_period?: number
+    tp_atr_mult?: number
+    sl_atr_mult?: number
+  }) => getJson<SimulateResponse>("/risk-reward", p),
   createTickJob: (body: TickJobCreate) =>
     postJson<TickJob>("/ticks/jobs", body),
   listTickJobs: (limit = 20) =>
