@@ -45,6 +45,14 @@ type Props = {
   allowZoom?: boolean
   /** Optional fixed X-axis domain in ms. */
   domain?: [number, number]
+  /** Horizontal guides drawn on the curve (TP and SL). */
+  levels?: { y: number; label: string; color: string }[]
+  /** Labeled points, such as the CSV exit. */
+  markers?: { t: string; y: number; label: string; color: string }[]
+  /** Draw the words on TP/SL lines and CSV dots. Off for small thumbnails. */
+  guideLabels?: boolean
+  title?: string
+  subtitle?: string
 }
 
 const usdFmt = new Intl.NumberFormat("en-US", {
@@ -221,6 +229,10 @@ export type EquityCurveZoomModalProps = {
   title?: string
   /** Optional extra subtitle after the points / ending line */
   subtitle?: string
+  /** Horizontal guides drawn on the curve (TP and SL). */
+  levels?: { y: number; label: string; color: string }[]
+  /** Labeled points, such as the CSV exit. */
+  markers?: { t: string; y: number; label: string; color: string }[]
 }
 
 /**
@@ -238,6 +250,8 @@ export function EquityCurveZoomModal({
   domain,
   title = "Equity curve",
   subtitle,
+  levels,
+  markers,
 }: EquityCurveZoomModalProps) {
   const { stats, dots } = useExtremumDots(equity, extremum)
   const netProfit = equity.length > 0 ? equity[equity.length - 1].equity : 0
@@ -279,10 +293,12 @@ export function EquityCurveZoomModal({
           </button>
         </div>
 
-        <SessionLegend
-          timeZone={timeZone}
-          className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground"
-        />
+        {sessionBands && sessionBands.length > 0 ? (
+          <SessionLegend
+            timeZone={timeZone}
+            className="rounded-md border border-border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground"
+          />
+        ) : null}
 
         <div className="h-[22rem] overflow-hidden rounded-lg border bg-card">
           <SignedAreaCurveChart
@@ -297,6 +313,8 @@ export function EquityCurveZoomModal({
             sessionBands={sessionBands}
             timeZone={timeZone}
             domain={domain}
+            levels={levels}
+            markers={markers}
           />
         </div>
 
@@ -347,6 +365,11 @@ export function PreciseEquityCurveChart({
   timeZone = "Europe/Bucharest",
   allowZoom = true,
   domain,
+  levels,
+  markers,
+  guideLabels = true,
+  title,
+  subtitle,
 }: Props) {
   const [zoomed, setZoomed] = useState(false)
   const { stats, dots } = useExtremumDots(equity, extremum)
@@ -363,6 +386,9 @@ export function PreciseEquityCurveChart({
     sessionBands,
     timeZone,
     domain,
+    levels,
+    markers,
+    guideLabels,
   }
 
   if (equity.length === 0) {
@@ -414,6 +440,10 @@ export function PreciseEquityCurveChart({
         sessionBands={sessionBands}
         timeZone={timeZone}
         domain={domain}
+        levels={levels}
+        markers={markers}
+        title={title}
+        subtitle={subtitle}
       />
     </>
   )

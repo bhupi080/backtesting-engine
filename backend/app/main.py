@@ -178,7 +178,7 @@ def risk_reward_sim(
     starting_balance: float = Query(2000.0, ge=100.0, le=1_000_000.0),
     chart_tf_minutes: int = Query(10, ge=0, le=240),
     analysis_tz: str | None = Query(None),
-    atr_bar_minutes: int = Query(10, ge=1, le=1440),
+    atr_bar_minutes: int = Query(60, ge=1, le=1440),
     atr_period: int = Query(14, ge=2, le=500),
     tp_atr_mult: float = Query(2.0, gt=0.0, le=50.0),
     sl_atr_mult: float = Query(1.0, gt=0.0, le=50.0),

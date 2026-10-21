@@ -39,7 +39,11 @@ import { Spinner } from "@/components/ui/spinner"
 import { ChartContainer, type ChartConfig } from "@/components/ui/chart"
 import { formatHumanDate, formatHumanDateDetail } from "@/lib/time"
 import { cn } from "@/lib/utils"
-import { SimAnalyticsPanel } from "@/routes/simulate"
+import {
+  DeferredTradeEquityChart,
+  SimAnalyticsPanel,
+  buildSessionBands,
+} from "@/routes/simulate"
 
 export const Route = createFileRoute("/compare")({
   component: RiskRewardPage,
@@ -159,16 +163,16 @@ function RiskRewardPage() {
   const [commission, setCommission] = useState(7)
   const [balance, setBalance] = useState(2000)
   const [chartTf, setChartTf] = useState(10)
-  const [atrBar, setAtrBar] = useState(10)
+  const [atrBar, setAtrBar] = useState(60)
   const [atrPeriod, setAtrPeriod] = useState(14)
   const [tpMult, setTpMult] = useState(2)
   const [slMult, setSlMult] = useState(1)
   const [timeZone, setTimeZone] = useState("Europe/Bucharest")
   const [runKey, setRunKey] = useState(0)
   const [committed, setCommitted] = useState<RunConfig | null>(null)
-  const [activeTab, setActiveTab] = useState<"overview" | "analytics" | "trades">(
-    "overview",
-  )
+  const [activeTab, setActiveTab] = useState<
+    "overview" | "analytics" | "trades" | "grid"
+  >("overview")
   const [fillGroup, setFillGroup] = useState<"signal" | "barClose">("barClose")
   const [strategyPickerOpen, setStrategyPickerOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -708,6 +712,7 @@ function RiskRewardPage() {
                     { id: "overview", label: "Overview" },
                     { id: "analytics", label: "Analytics" },
                     { id: "trades", label: "Trades" },
+                    { id: "grid", label: "Equity by trade" },
                   ] as const
                 ).map((tab) => (
                   <button
@@ -755,6 +760,12 @@ function RiskRewardPage() {
                     summary={summary}
                     trades={activeSim.trades}
                     equity={chartEquity}
+                    timeZone={timeZone}
+                  />
+                ) : activeTab === "grid" ? (
+                  <EquityCurveGrid
+                    rows={activeSim.trades}
+                    tradeEquity={activeSim.trade_equity ?? {}}
                     timeZone={timeZone}
                   />
                 ) : (
@@ -862,17 +873,17 @@ const exitChartConfig = {
 } satisfies ChartConfig
 
 function HitCountLabel(props: {
-  x?: number | string
-  y?: number | string
-  width?: number | string
-  height?: number | string
-  value?: number | string
+  x?: unknown
+  y?: unknown
+  width?: unknown
+  height?: unknown
+  value?: unknown
 }) {
   const x = Number(props.x)
   const y = Number(props.y)
   const width = Number(props.width)
   const height = Number(props.height)
-  if (![x, y, width, height].every(Number.isFinite)) return null
+  if (![x, y, width, height].every(Number.isFinite)) return <g />
   const tall = Math.abs(height) >= 36
   const cy = tall ? y + height / 2 : height >= 0 ? y - 12 : y + height - 12
   return (
@@ -885,7 +896,7 @@ function HitCountLabel(props: {
       fontSize={13}
       fontWeight={650}
     >
-      {props.value}
+      {props.value == null ? "" : String(props.value)}
     </text>
   )
 }
@@ -903,7 +914,7 @@ function ResultStrip({
 }) {
   const totals = [
     { label: "ATR exits", value: atrPnl },
-    { label: "Raw exits", value: rawPnl },
+    { label: "Before TP/SL", value: rawPnl },
     { label: "Difference", value: delta },
   ]
   const byLabel = new Map(exits.map((item) => [item.label, item]))
@@ -930,10 +941,11 @@ function ResultStrip({
               tickLine={false}
               axisLine={false}
               interval={0}
-              tick={(props: { x?: number; y?: number; payload?: { value?: string } }) => {
-                const row = byLabel.get(props.payload?.value ?? "")
-                const x = props.x ?? 0
-                const y = props.y ?? 0
+              tick={(props) => {
+                const payload = props.payload as { value?: string } | undefined
+                const row = byLabel.get(payload?.value ?? "")
+                const x = Number(props.x) || 0
+                const y = Number(props.y) || 0
                 return (
                   <g transform={`translate(${x},${y})`}>
                     <text
@@ -943,7 +955,7 @@ function ResultStrip({
                       fontSize={11}
                       className="fill-muted-foreground"
                     >
-                      {props.payload?.value}
+                      {payload?.value}
                     </text>
                     <text
                       textAnchor="middle"
@@ -972,6 +984,104 @@ function ResultStrip({
   )
 }
 
+function levelsFor(trade: SimulateResponse["trades"][number]) {
+  return [
+    trade.tp_pnl_usd != null
+      ? { y: trade.tp_pnl_usd, label: `TP hit ${formatPnl(trade.tp_pnl_usd)}`, color: "#22c55e" }
+      : null,
+    trade.sl_pnl_usd != null
+      ? { y: trade.sl_pnl_usd, label: `SL hit ${formatPnl(trade.sl_pnl_usd)}`, color: "#ef4444" }
+      : null,
+  ].filter((level): level is { y: number; label: string; color: string } => level != null)
+}
+
+function csvExitMarker(path: { t: string; equity: number }[]) {
+  const last = path[path.length - 1]
+  if (!last) return undefined
+  return [
+    {
+      t: last.t,
+      y: last.equity,
+      label: `CSV exit ${formatPnl(last.equity)}`,
+      color: "#f59e0b",
+    },
+  ]
+}
+
+function EquityCurveGrid({
+  rows,
+  tradeEquity,
+  timeZone,
+}: {
+  rows: SimulateResponse["trades"]
+  tradeEquity: Record<string, { t: string; equity: number; drawdown: number }[]>
+  timeZone: string
+}) {
+  const filled = rows.filter((row) => row.status === "ok" && row.net_pnl_usd != null)
+
+  if (filled.length === 0) {
+    return (
+      <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+        No filled trades to chart.
+      </div>
+    )
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
+      {filled.map((trade) => {
+        const path = tradeEquity[String(trade.trade_id)] ?? []
+        const reason = trade.exit_reason ?? "signal"
+        const closed = EXIT_LABEL[reason] ?? reason
+        return (
+          <div key={trade.trade_id} className="rounded-md border bg-card p-2">
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="font-mono text-xs font-semibold text-muted-foreground">
+                  #{trade.trade_id}
+                </span>
+                <span
+                  className={cn(
+                    "inline-flex rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide",
+                    trade.side.toLowerCase() === "long"
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : "bg-rose-500/10 text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {trade.side}
+                </span>
+                <span className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold", exitBadgeClass(reason))}>
+                  {closed}
+                </span>
+              </div>
+              <span
+                className={cn(
+                  "font-mono text-xs font-semibold tabular-nums",
+                  pnlClass(trade.net_pnl_usd),
+                )}
+              >
+                {formatPnl(trade.net_pnl_usd)}
+              </span>
+            </div>
+            <DeferredTradeEquityChart
+              equity={path}
+              sessionBands={[]}
+              timeZone={timeZone}
+              domain={undefined}
+              levels={levelsFor(trade)}
+              markers={csvExitMarker(path)}
+              guideLabels
+              plain
+              title={`Trade #${trade.trade_id}`}
+              subtitle={closed}
+            />
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 function RrTradesTable({
   rows,
   rawRows,
@@ -991,6 +1101,8 @@ function RrTradesTable({
     for (const row of rawRows) map.set(row.trade_id, row)
     return map
   }, [rawRows])
+  const zoomLevels = useMemo(() => (zoomed ? levelsFor(zoomed) : undefined), [zoomed])
+  const zoomMarkers = useMemo(() => csvExitMarker(zoomedPath), [zoomedPath])
   const rowGrid =
     "grid grid-cols-[2.4rem_4.5rem_6.5rem_4.5rem_5.5rem_5.5rem_minmax(12rem,1fr)_5.5rem_5.5rem_2rem] items-center gap-x-3 px-3"
 
@@ -1018,7 +1130,7 @@ function RrTradesTable({
             <span className="py-2.5 text-right">SL</span>
             <span className="py-2.5">Open → close</span>
             <span className="py-2.5 text-right">ATR</span>
-            <span className="py-2.5 text-right">Raw</span>
+            <span className="py-2.5 text-right">Before</span>
             <span />
           </div>
           {rows.map((row, i) => {
@@ -1089,12 +1201,15 @@ function RrTradesTable({
         onClose={() => setZoomedId(null)}
         equity={zoomedPath}
         timeZone={timeZone}
+        sessionBands={buildSessionBands(zoomedPath, timeZone)}
         title={zoomed ? `Trade #${zoomed.trade_id}` : "Trade"}
         subtitle={
           zoomed
-            ? `${EXIT_LABEL[zoomed.exit_reason ?? ""] ?? zoomed.exit_reason ?? "Exit"} · ATR ${formatPx(zoomed.atr)} · TP ${formatPx(zoomed.tp_price)} · SL ${formatPx(zoomed.sl_price)}`
+            ? `${EXIT_LABEL[zoomed.exit_reason ?? ""] ?? zoomed.exit_reason ?? "Exit"} · ATR ${formatPx(zoomed.atr)}`
             : undefined
         }
+        levels={zoomLevels}
+        markers={zoomMarkers}
       />
     </div>
   )

@@ -132,6 +132,8 @@ class SimTradeResult(BaseModel):
     atr: float | None = None
     tp_price: float | None = None
     sl_price: float | None = None
+    tp_pnl_usd: float | None = None
+    sl_pnl_usd: float | None = None
     exit_reason: str | None = None
 
 

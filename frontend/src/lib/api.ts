@@ -134,6 +134,8 @@ export type SimulateResponse = {
     atr?: number | null
     tp_price?: number | null
     sl_price?: number | null
+    tp_pnl_usd?: number | null
+    sl_pnl_usd?: number | null
     exit_reason?: string | null
   }[]
   equity: { t: string; equity: number; drawdown: number; exit_reason?: string | null }[]

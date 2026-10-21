@@ -54,6 +54,12 @@ export type SignedAreaCurveChartProps = {
   formatValue?: (n: number) => string
   /** Optional fixed X-axis domain in ms. Falls back to data min/max. */
   domain?: [number, number]
+  /** Horizontal PnL guides (trade TP and SL). */
+  levels?: { y: number; label: string; color: string }[]
+  /** Labeled points, such as the CSV exit at the end of the path. */
+  markers?: { t: string; y: number; label: string; color: string }[]
+  /** Draw the words on TP/SL lines and CSV dots. Off for small thumbnails. */
+  guideLabels?: boolean
 }
 
 const COLORS = {
@@ -96,6 +102,9 @@ export function SignedAreaCurveChart({
   timeZone = "Europe/Bucharest",
   formatValue = defaultFormatUsd,
   domain,
+  levels,
+  markers,
+  guideLabels = true,
 }: SignedAreaCurveChartProps) {
   const positiveGradientId = `pos-${useId().replace(/:/g, "")}`
   const negativeGradientId = `neg-${useId().replace(/:/g, "")}`
@@ -195,6 +204,22 @@ export function SignedAreaCurveChart({
       })
   }, [xDomain, timeZone])
 
+  const yDomain = useMemo((): [number, number] | ["auto", "auto"] => {
+    if (!levels?.length || displayData.length === 0) return ["auto", "auto"]
+    const ys = [
+      ...displayData.map((point) => point.pnl),
+      ...levels.map((level) => level.y),
+    ]
+    let min = Math.min(...ys)
+    let max = Math.max(...ys)
+    if (min === max) {
+      min -= 1
+      max += 1
+    }
+    const pad = (max - min) * 0.08
+    return [min - pad, max + pad]
+  }, [displayData, levels])
+
   const exitDots = useMemo(() => {
     return displayData.flatMap((p) => {
       const exit = p.meta?.Exit
@@ -210,7 +235,7 @@ export function SignedAreaCurveChart({
     })
   }, [displayData])
 
-  const markers = useMemo(() => {
+  const extremumMarkers = useMemo(() => {
     if (!showExtremumDots || displayData.length === 0) {
       return {
         runup: null as ExtremumDot | null,
@@ -318,7 +343,7 @@ export function SignedAreaCurveChart({
           }}
         />
         <YAxis
-          domain={["auto", "auto"]}
+          domain={yDomain}
           orientation="right"
           tickLine={false}
           axisLine={false}
@@ -435,10 +460,31 @@ export function SignedAreaCurveChart({
           dot={false}
           activeDot={{ r: 4, strokeWidth: 0 }}
         />
-        {markers.runup ? (
+        {levels?.map((level, index) => (
+          <ReferenceLine
+            key={level.label}
+            y={level.y}
+            stroke={level.color}
+            strokeDasharray="6 4"
+            strokeWidth={2}
+            ifOverflow="extendDomain"
+            zIndex={900}
+            label={
+              guideLabels
+                ? {
+                    value: level.label,
+                    position: index === 0 ? "insideTopLeft" : "insideBottomLeft",
+                    fill: level.color,
+                    fontSize: 11,
+                  }
+                : false
+            }
+          />
+        ))}
+        {extremumMarkers.runup ? (
           <ReferenceDot
-            x={markers.runup.time}
-            y={markers.runup.pnl}
+            x={extremumMarkers.runup.time}
+            y={extremumMarkers.runup.pnl}
             r={5}
             fill={COLORS.green}
             stroke="#fff"
@@ -446,10 +492,10 @@ export function SignedAreaCurveChart({
             ifOverflow="extendDomain"
           />
         ) : null}
-        {markers.drawdown ? (
+        {extremumMarkers.drawdown ? (
           <ReferenceDot
-            x={markers.drawdown.time}
-            y={markers.drawdown.pnl}
+            x={extremumMarkers.drawdown.time}
+            y={extremumMarkers.drawdown.pnl}
             r={5}
             fill={COLORS.red}
             stroke="#fff"
@@ -469,6 +515,32 @@ export function SignedAreaCurveChart({
             ifOverflow="extendDomain"
           />
         ))}
+        {markers?.map((marker) => {
+          const time = Date.parse(marker.t)
+          if (Number.isNaN(time)) return null
+          return (
+            <ReferenceDot
+              key={marker.label}
+              x={time}
+              y={marker.y}
+              r={5}
+              fill={marker.color}
+              stroke="#fff"
+              strokeWidth={1}
+              ifOverflow="extendDomain"
+              label={
+                guideLabels
+                  ? {
+                      value: marker.label,
+                      position: "top",
+                      fill: marker.color,
+                      fontSize: 11,
+                    }
+                  : undefined
+              }
+            />
+          )
+        })}
       </AreaChart>
     </ChartContainer>
   )

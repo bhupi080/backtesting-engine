@@ -198,6 +198,7 @@ def _apply_atr_exits(
     symbol: str,
     fills: list[TradeFill],
     *,
+    lots: float,
     atr_bar_minutes: int,
     atr_period: int,
     tp_atr_mult: float,
@@ -244,10 +245,13 @@ def _apply_atr_exits(
         tp, sl = level_prices(
             fill.side, float(fill.fill_entry_price), atr, tp_atr_mult, sl_atr_mult
         )
+        entry_px = float(fill.fill_entry_price)
         extras[fill.trade_id] = {
             "atr": round(atr, 6),
             "tp_price": tp,
             "sl_price": sl,
+            "tp_pnl_usd": round(_pnl_usd(symbol, fill.side, entry_px, tp, lots), 2),
+            "sl_pnl_usd": round(_pnl_usd(symbol, fill.side, entry_px, sl, lots), 2),
             "exit_reason": "signal",
         }
         levels.append(
@@ -311,7 +315,7 @@ def simulate_risk_reward(
     analysis_tz: str | None = None,
     from_ts: str | None = None,
     to_ts: str | None = None,
-    atr_bar_minutes: int = 10,
+    atr_bar_minutes: int = 60,
     atr_period: int = 14,
     tp_atr_mult: float = 2.0,
     sl_atr_mult: float = 1.0,
@@ -326,21 +330,70 @@ def simulate_risk_reward(
         to_ts=to_ts,
         settings=settings,
     )
+    csv_exit: dict[int, tuple[int, str | None, float | None, str | None]] = {}
+    for fill in fills:
+        if fill.status == "ok" and fill.exit_fill_ms is not None:
+            csv_exit[fill.trade_id] = (
+                int(fill.exit_fill_ms),
+                fill.fill_exit_time,
+                fill.fill_exit_price,
+                fill.exit_side,
+            )
     extras = _apply_atr_exits(
         symbol,
         fills,
+        lots=lots,
         atr_bar_minutes=atr_bar_minutes,
         atr_period=atr_period,
         tp_atr_mult=tp_atr_mult,
         sl_atr_mult=sl_atr_mult,
         settings=settings,
     )
+    # Chart path runs through the original CSV exit. PnL still uses the ATR exit.
+    atr_exit: dict[int, tuple[int | None, str | None, float | None, str | None]] = {}
+    for fill in fills:
+        orig = csv_exit.get(fill.trade_id)
+        if orig is None:
+            continue
+        atr_exit[fill.trade_id] = (
+            fill.exit_fill_ms,
+            fill.fill_exit_time,
+            fill.fill_exit_price,
+            fill.exit_side,
+        )
+        (
+            fill.exit_fill_ms,
+            fill.fill_exit_time,
+            fill.fill_exit_price,
+            fill.exit_side,
+        ) = orig
     excursions, trade_paths = compute_excursions(
         symbol,
         fills,
         lots=lots,
         settings=settings,
     )
+    shortened = False
+    for fill in fills:
+        saved = atr_exit.get(fill.trade_id)
+        orig = csv_exit.get(fill.trade_id)
+        if saved is None:
+            continue
+        if orig is not None and saved[0] != orig[0]:
+            shortened = True
+        (
+            fill.exit_fill_ms,
+            fill.fill_exit_time,
+            fill.fill_exit_price,
+            fill.exit_side,
+        ) = saved
+    if shortened:
+        excursions, _atr_paths = compute_excursions(
+            symbol,
+            fills,
+            lots=lots,
+            settings=settings,
+        )
     for fill in fills:
         ex = excursions.get(fill.trade_id)
         if ex:

@@ -887,7 +887,7 @@ function localYmdToMs(ymd: string, hour: number, timeZone: string): number {
 }
 
 /** Return the local calendar-day domain (midnight → next midnight) for the first equity point. */
-function getDayDomain(
+export function getDayDomain(
   equity: { t: string }[],
   timeZone: string,
 ): [number, number] | undefined {
@@ -966,7 +966,7 @@ function buildSessionBandsForDay(
 }
 
 /** Build session bands covering the calendar day of the first equity point. */
-function buildSessionBands(
+export function buildSessionBands(
   equity: { t: string }[],
   timeZone: string,
 ): import("@/components/charts/signed-area-curve-chart").SessionBand[] {
@@ -1487,16 +1487,28 @@ export function SimAnalyticsPanel({
 }
 
 /** Keep a top-layer spinner until Recharts has a real SVG size (was painting blank). */
-function DeferredTradeEquityChart({
+export function DeferredTradeEquityChart({
   equity,
   sessionBands,
   timeZone,
   domain,
+  levels,
+  markers,
+  guideLabels = true,
+  plain = false,
+  title,
+  subtitle,
 }: {
   equity: EquityPoint[]
   sessionBands: import("@/components/charts/signed-area-curve-chart").SessionBand[]
   timeZone: string
   domain: [number, number] | undefined
+  levels?: { y: number; label: string; color: string }[]
+  markers?: { t: string; y: number; label: string; color: string }[]
+  guideLabels?: boolean
+  plain?: boolean
+  title?: string
+  subtitle?: string
 }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const [chartReady, setChartReady] = useState(false)
@@ -1540,7 +1552,10 @@ function DeferredTradeEquityChart({
   return (
     <div
       ref={hostRef}
-      className="relative h-28 w-full min-h-[7rem] overflow-hidden rounded-md bg-muted/15"
+      className={cn(
+        "relative h-28 w-full min-h-[7rem] overflow-hidden rounded-md",
+        plain ? "bg-transparent" : "bg-muted/15",
+      )}
     >
       {equity.length === 0 ? (
         <div className="flex h-full items-center justify-center text-xs text-muted-foreground">
@@ -1554,6 +1569,11 @@ function DeferredTradeEquityChart({
           sessionBands={sessionBands}
           timeZone={timeZone}
           domain={domain}
+          levels={levels}
+          markers={markers}
+          guideLabels={guideLabels}
+          title={title}
+          subtitle={subtitle}
         />
       )}
 
