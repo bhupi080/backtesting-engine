@@ -103,6 +103,11 @@ type RunConfig = {
   slMult: number
 }
 
+function formatMult(n: number | null | undefined): string {
+  if (n == null || Number.isNaN(n)) return "—"
+  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10)
+}
+
 function formatUsd(n: number | null | undefined, digits = 2): string {
   if (n == null || Number.isNaN(n)) return "—"
   return n.toLocaleString(undefined, {
@@ -709,7 +714,7 @@ function RiskRewardPage() {
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <div className="shrink-0 border-b border-border px-3 py-2">
                 <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-3">
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="font-mono text-xs font-semibold tracking-tight">
                         {applied.symbol}
@@ -724,8 +729,7 @@ function RiskRewardPage() {
                       <span className="text-[10px] text-muted-foreground">
                         · ATR {committed?.atrPeriod} ×{" "}
                         {ATR_BARS.find((b) => Number(b.value) === committed?.atrBar)?.label ??
-                          `${committed?.atrBar ?? atrBar} min`}{" "}
-                        · TP ×{committed?.tpMult} · SL ×{committed?.slMult}
+                          `${committed?.atrBar ?? atrBar} min`}
                       </span>
                       {settingsDirty ? (
                         <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] text-amber-700 dark:text-amber-400">
@@ -745,6 +749,14 @@ function RiskRewardPage() {
                         </span>
                       </p>
                     ) : null}
+                  </div>
+                  <div className="flex flex-1 items-center justify-center gap-1.5">
+                    <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2.5 py-1 font-mono text-[12px] font-semibold text-emerald-700 dark:text-emerald-400">
+                      TP ×{formatMult(committed?.tpMult)}
+                    </span>
+                    <span className="rounded-md border border-rose-500/40 bg-rose-500/10 px-2.5 py-1 font-mono text-[12px] font-semibold text-rose-700 dark:text-rose-400">
+                      SL ×{formatMult(committed?.slMult)}
+                    </span>
                   </div>
                   {hasDualGroups ? (
                     <div className="grid shrink-0 grid-cols-2 gap-1.5 lg:w-[28rem]">
