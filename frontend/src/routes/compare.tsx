@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import {
   ChevronDown,
   PanelLeftClose,
@@ -16,13 +16,25 @@ import { Bar, BarChart, Cell, LabelList, ReferenceLine, XAxis, YAxis } from "rec
 import { EquityCurveZoomModal } from "@/components/charts"
 import { LoadingState } from "@/components/loading-state"
 import { SimOverviewPanel } from "@/components/sim-overview-panel"
-import { api, type SimulateResponse, type StrategyInfo } from "@/lib/api"
+import { api, type RiskRewardGrid, type SimulateResponse, type StrategyInfo } from "@/lib/api"
 import { useFilters } from "@/lib/filters"
+import {
+  getRiskRewardSession,
+  getSuggestionBuilt,
+  getSuggestionDraft,
+  getSuggestionRange,
+  saveRiskRewardSession,
+  saveSuggestionBuilt,
+  saveSuggestionDraft,
+  saveSuggestionRange,
+} from "@/lib/run-session"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -156,26 +168,26 @@ function exitBadgeClass(reason: string | null | undefined): string {
 }
 
 function RiskRewardPage() {
+  const saved = getRiskRewardSession()
   const { applied, selectAndApply } = useFilters()
   const [query, setQuery] = useState("")
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [lots, setLots] = useState(0.1)
-  const [commission, setCommission] = useState(7)
-  const [balance, setBalance] = useState(2000)
-  const [chartTf, setChartTf] = useState(10)
-  const [atrBar, setAtrBar] = useState(60)
-  const [atrPeriod, setAtrPeriod] = useState(14)
-  const [tpMult, setTpMult] = useState(2)
-  const [slMult, setSlMult] = useState(1)
-  const [timeZone, setTimeZone] = useState("Europe/Bucharest")
-  const [runKey, setRunKey] = useState(0)
-  const [committed, setCommitted] = useState<RunConfig | null>(null)
-  const [activeTab, setActiveTab] = useState<
-    "overview" | "analytics" | "trades" | "grid"
-  >("overview")
-  const [fillGroup, setFillGroup] = useState<"signal" | "barClose">("barClose")
+  const [lots, setLots] = useState(saved.lots)
+  const [commission, setCommission] = useState(saved.commission)
+  const [balance, setBalance] = useState(saved.balance)
+  const [chartTf, setChartTf] = useState(saved.chartTf)
+  const [atrBar, setAtrBar] = useState(saved.atrBar)
+  const [atrPeriod, setAtrPeriod] = useState(saved.atrPeriod)
+  const [tpMult, setTpMult] = useState(saved.tpMult)
+  const [slMult, setSlMult] = useState(saved.slMult)
+  const [timeZone, setTimeZone] = useState(saved.timeZone)
+  const [runKey, setRunKey] = useState(saved.runKey)
+  const [committed, setCommitted] = useState<RunConfig | null>(saved.committed)
+  const [activeTab, setActiveTab] = useState(saved.activeTab)
+  const [fillGroup, setFillGroup] = useState(saved.fillGroup)
   const [strategyPickerOpen, setStrategyPickerOpen] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(saved.sidebarOpen)
+  const resumedRun = useRef(saved.runKey)
 
   const strategiesQ = useQuery({
     queryKey: ["strategies"],
@@ -259,14 +271,56 @@ function RiskRewardPage() {
   })
 
   useEffect(() => {
+    if (!committed) return
+    if (
+      committed.symbol === applied.symbol &&
+      committed.strategyId === applied.strategyId
+    ) {
+      return
+    }
     setRunKey(0)
     setCommitted(null)
-  }, [applied.symbol, applied.strategyId])
+  }, [applied.symbol, applied.strategyId, committed])
 
   useEffect(() => {
-    if (!simQ.data) return
+    saveRiskRewardSession({
+      lots,
+      commission,
+      balance,
+      chartTf,
+      atrBar,
+      atrPeriod,
+      tpMult,
+      slMult,
+      timeZone,
+      runKey,
+      committed,
+      activeTab,
+      fillGroup,
+      sidebarOpen,
+    })
+  }, [
+    lots,
+    commission,
+    balance,
+    chartTf,
+    atrBar,
+    atrPeriod,
+    tpMult,
+    slMult,
+    timeZone,
+    runKey,
+    committed,
+    activeTab,
+    fillGroup,
+    sidebarOpen,
+  ])
+
+  useEffect(() => {
+    if (!simQ.data || runKey === 0 || resumedRun.current === runKey) return
+    resumedRun.current = runKey
     setFillGroup(simQ.data.barClose ? "barClose" : "signal")
-  }, [simQ.data])
+  }, [simQ.data, runKey])
 
   const settingsDirty = Boolean(
     committed &&
@@ -326,6 +380,8 @@ function RiskRewardPage() {
   const hasDualGroups = Boolean(simQ.data?.barClose)
   const signalPnl = simQ.data?.signal.summary?.sim_pnl_usd
   const barClosePnl = simQ.data?.barClose?.summary?.sim_pnl_usd
+  const signalRawPnl = simQ.data?.rawSignal.summary?.sim_pnl_usd
+  const barCloseRawPnl = simQ.data?.rawBarClose?.summary?.sim_pnl_usd
   const atrPnl = summary?.sim_pnl_usd
   const rawPnl = activeRaw?.summary?.sim_pnl_usd
   const pnlDelta =
@@ -345,9 +401,13 @@ function RiskRewardPage() {
     return symbol === applied.symbol
   }
 
-  function runSim() {
+  function runSim(next?: { tpMult?: number; slMult?: number }) {
     if (!applied.symbol || !applied.strategyId) return
-    if (atrPeriod < 2 || tpMult <= 0 || slMult <= 0) return
+    const nextTp = next?.tpMult ?? tpMult
+    const nextSl = next?.slMult ?? slMult
+    if (atrPeriod < 2 || nextTp <= 0 || nextSl <= 0) return
+    if (next?.tpMult != null) setTpMult(next.tpMult)
+    if (next?.slMult != null) setSlMult(next.slMult)
     setCommitted({
       symbol: applied.symbol,
       strategyId: applied.strategyId,
@@ -357,10 +417,11 @@ function RiskRewardPage() {
       chartTf,
       atrBar,
       atrPeriod,
-      tpMult,
-      slMult,
+      tpMult: nextTp,
+      slMult: nextSl,
     })
     setRunKey((k) => k + 1)
+    if (next) setActiveTab("overview")
   }
 
   const hasSelection = Boolean(applied.symbol && applied.strategyId)
@@ -686,12 +747,13 @@ function RiskRewardPage() {
                     ) : null}
                   </div>
                   {hasDualGroups ? (
-                    <div className="grid shrink-0 grid-cols-2 gap-1.5 lg:w-[22rem]">
+                    <div className="grid shrink-0 grid-cols-2 gap-1.5 lg:w-[28rem]">
                       <FillGroupCard
                         active={fillGroup === "signal"}
                         title="At signal"
                         tfLabel="0m"
                         pnl={signalPnl}
+                        rawPnl={signalRawPnl}
                         onClick={() => setFillGroup("signal")}
                       />
                       <FillGroupCard
@@ -699,6 +761,7 @@ function RiskRewardPage() {
                         title="Bar close"
                         tfLabel={`${simQ.data?.chartTf ?? chartTf}m`}
                         pnl={barClosePnl}
+                        rawPnl={barCloseRawPnl}
                         onClick={() => setFillGroup("barClose")}
                       />
                     </div>
@@ -713,6 +776,7 @@ function RiskRewardPage() {
                     { id: "analytics", label: "Analytics" },
                     { id: "trades", label: "Trades" },
                     { id: "grid", label: "Equity by trade" },
+                    { id: "suggestions", label: "Suggestions" },
                   ] as const
                 ).map((tab) => (
                   <button
@@ -767,6 +831,20 @@ function RiskRewardPage() {
                     rows={activeSim.trades}
                     tradeEquity={activeSim.trade_equity ?? {}}
                     timeZone={timeZone}
+                  />
+                ) : activeTab === "suggestions" ? (
+                  <SuggestionGrid
+                    symbol={committed?.symbol ?? applied.symbol}
+                    strategyId={committed?.strategyId ?? applied.strategyId}
+                    lots={committed?.lots ?? lots}
+                    commission={committed?.commission ?? commission}
+                    chartTf={committed?.chartTf ?? chartTf}
+                    atrBar={committed?.atrBar ?? atrBar}
+                    atrPeriod={committed?.atrPeriod ?? atrPeriod}
+                    fillGroup={fillGroup}
+                    tpMult={tpMult}
+                    slMult={slMult}
+                    onPick={(tp, sl) => runSim({ tpMult: tp, slMult: sl })}
                   />
                 ) : (
                   <RrTradesTable
@@ -830,12 +908,14 @@ function FillGroupCard({
   title,
   tfLabel,
   pnl,
+  rawPnl,
   onClick,
 }: {
   active: boolean
   title: string
   tfLabel: string
   pnl: number | null | undefined
+  rawPnl: number | null | undefined
   onClick: () => void
 }) {
   return (
@@ -861,9 +941,20 @@ function FillGroupCard({
           </span>
         ) : null}
       </div>
-      <p className={cn("mt-0.5 font-mono text-sm font-semibold tabular-nums", pnlClass(pnl))}>
-        {formatPnl(pnl)}
-      </p>
+      <div className="mt-1 grid grid-cols-2 gap-2">
+        <div>
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">ATR</p>
+          <p className={cn("font-mono text-[13px] font-semibold tabular-nums", pnlClass(pnl))}>
+            {formatPnl(pnl)}
+          </p>
+        </div>
+        <div>
+          <p className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">No ATR</p>
+          <p className={cn("font-mono text-[13px] font-semibold tabular-nums", pnlClass(rawPnl))}>
+            {formatPnl(rawPnl)}
+          </p>
+        </div>
+      </div>
     </button>
   )
 }
@@ -980,6 +1071,223 @@ function ResultStrip({
           </BarChart>
         </ChartContainer>
       </div>
+    </div>
+  )
+}
+
+function SuggestionGrid({
+  symbol,
+  strategyId,
+  lots,
+  commission,
+  chartTf,
+  atrBar,
+  atrPeriod,
+  fillGroup,
+  tpMult,
+  slMult,
+  onPick,
+}: {
+  symbol: string
+  strategyId: string
+  lots: number
+  commission: number
+  chartTf: number
+  atrBar: number
+  atrPeriod: number
+  fillGroup: "signal" | "barClose"
+  tpMult: number
+  slMult: number
+  onPick: (tp: number, sl: number) => void
+}) {
+  const draft = getSuggestionDraft()
+  const [tpFrom, setTpFrom] = useState(draft.tpFrom)
+  const [tpTo, setTpTo] = useState(draft.tpTo)
+  const [slFrom, setSlFrom] = useState(draft.slFrom)
+  const [slTo, setSlTo] = useState(draft.slTo)
+  const [range, setRange] = useState(getSuggestionRange)
+  const [built, setBuilt] = useState(getSuggestionBuilt)
+  const [pending, setPending] = useState<{ tp: number; sl: number; pnl: number } | null>(null)
+  const atrBarLabel = ATR_BARS.find((bar) => Number(bar.value) === atrBar)?.label ?? `${atrBar} min`
+
+  const gridQ = useQuery({
+    queryKey: ["risk-reward-grid", symbol, strategyId, lots, commission, chartTf, atrBar, atrPeriod, range],
+    queryFn: () =>
+      api.riskRewardGrid({
+        symbol,
+        strategy_id: strategyId,
+        lots,
+        commission_per_lot: commission,
+        chart_tf_minutes: chartTf,
+        atr_bar_minutes: atrBar,
+        atr_period: atrPeriod,
+        tp_min: Math.min(range.tpFrom, range.tpTo),
+        tp_max: Math.max(range.tpFrom, range.tpTo),
+        sl_min: Math.min(range.slFrom, range.slTo),
+        sl_max: Math.max(range.slFrom, range.slTo),
+        step: 0.1,
+      }),
+    enabled: built && Boolean(symbol && strategyId),
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+  })
+
+  useEffect(() => {
+    saveSuggestionDraft({ tpFrom, tpTo, slFrom, slTo })
+  }, [tpFrom, tpTo, slFrom, slTo])
+
+  useEffect(() => {
+    saveSuggestionRange(range)
+  }, [range])
+
+  useEffect(() => {
+    saveSuggestionBuilt(built)
+  }, [built])
+
+  const data: RiskRewardGrid | undefined = gridQ.data
+  const matrix =
+    fillGroup === "barClose" && data?.bar_close ? data.bar_close : data?.signal
+  const maxAbs = Math.max(1, ...(matrix ?? []).flat().map((n) => Math.abs(n)))
+  const mode =
+    chartTf > 0 && fillGroup === "barClose" ? `Bar close · ${chartTf}m` : "At signal · 0m"
+
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium tracking-tight">ATR suggestions</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {mode}. Set the ranges, then press Build. Each cell is total PnL after commission.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="w-24"><Field label="TP from" value={tpFrom} onChange={setTpFrom} step={0.1} min={0.1} /></div>
+          <div className="w-24"><Field label="TP to" value={tpTo} onChange={setTpTo} step={0.1} min={0.1} /></div>
+          <div className="w-24"><Field label="SL from" value={slFrom} onChange={setSlFrom} step={0.1} min={0.1} /></div>
+          <div className="w-24"><Field label="SL to" value={slTo} onChange={setSlTo} step={0.1} min={0.1} /></div>
+          <Button
+            type="button"
+            size="sm"
+            className="h-9"
+            disabled={gridQ.isFetching}
+            onClick={() => {
+              setRange({ tpFrom, tpTo, slFrom, slTo })
+              setBuilt(true)
+            }}
+          >
+            {built ? "Update" : "Build"}
+          </Button>
+        </div>
+      </div>
+      {!built ? (
+        <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+          Press Build to fill the table.
+        </div>
+      ) : gridQ.isFetching ? (
+        <LoadingState title="Building the table" message="Checking each take-profit and stop pair…" />
+      ) : gridQ.isError ? (
+        <p className="text-sm text-destructive">{String(gridQ.error)}</p>
+      ) : data && matrix ? (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full border-collapse text-[11px]">
+            <thead>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="sticky left-0 bg-muted/80 px-2 py-2 text-left font-medium text-muted-foreground">
+                  TP \ SL
+                </th>
+                {data.sl.map((sl) => (
+                  <th key={sl} className="px-2 py-2 text-right font-mono font-medium text-muted-foreground">
+                    ×{sl.toFixed(1)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.tp.map((tp, rowIndex) => (
+                <tr key={tp} className="border-b border-border/60 last:border-0">
+                  <th className="sticky left-0 bg-background px-2 py-1.5 text-left font-mono font-medium text-muted-foreground">
+                    ×{tp.toFixed(1)}
+                  </th>
+                  {data.sl.map((sl, colIndex) => {
+                    const pnl = matrix[rowIndex]?.[colIndex] ?? 0
+                    const strength = Math.min(0.45, (Math.abs(pnl) / maxAbs) * 0.45)
+                    const selected = Math.abs(tp - tpMult) < 0.001 && Math.abs(sl - slMult) < 0.001
+                    return (
+                      <td key={sl} className="p-0.5">
+                        <button
+                          type="button"
+                          onClick={() => setPending({ tp, sl, pnl })}
+                          className={cn(
+                            "w-full rounded px-2 py-1.5 text-right font-mono tabular-nums",
+                            pnlClass(pnl),
+                            selected && "ring-2 ring-orange-500",
+                          )}
+                          style={{
+                            backgroundColor:
+                              pnl >= 0
+                                ? `rgba(16, 185, 129, ${strength})`
+                                : `rgba(244, 63, 94, ${strength})`,
+                          }}
+                        >
+                          {formatPnl(pnl)}
+                        </button>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      <Dialog open={pending != null} onOpenChange={(open) => { if (!open) setPending(null) }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Run this ATR pair?</DialogTitle>
+            <DialogDescription>
+              The other tabs will reload with these levels.
+            </DialogDescription>
+          </DialogHeader>
+          {pending ? (
+            <div className="grid grid-cols-2 gap-2 py-2">
+              <div className="rounded-md border px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">ATR bar</p>
+                <p className="mt-1 font-mono text-sm">{atrBarLabel}</p>
+              </div>
+              <div className="rounded-md border px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">ATR length</p>
+                <p className="mt-1 font-mono text-sm">{atrPeriod}</p>
+              </div>
+              <div className="rounded-md border px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Take profit</p>
+                <p className="mt-1 font-mono text-sm">×{pending.tp.toFixed(1)}</p>
+              </div>
+              <div className="rounded-md border px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Stop</p>
+                <p className="mt-1 font-mono text-sm">×{pending.sl.toFixed(1)}</p>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter className="flex-row justify-end gap-2">
+            <Button type="button" variant="outline" onClick={() => setPending(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              className="bg-orange-600 text-white hover:bg-orange-600/90"
+              onClick={() => {
+                if (!pending) return
+                const next = pending
+                setPending(null)
+                onPick(next.tp, next.sl)
+              }}
+            >
+              Run
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

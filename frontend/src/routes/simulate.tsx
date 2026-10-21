@@ -28,6 +28,7 @@ import { LoadingState } from "@/components/loading-state"
 import { SimOverviewPanel } from "@/components/sim-overview-panel"
 import { api, type SimulateResponse, type StrategyInfo } from "@/lib/api"
 import { useFilters } from "@/lib/filters"
+import { getSimulateSession, saveSimulateSession } from "@/lib/run-session"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -111,31 +112,24 @@ type DualSimResult = {
 }
 
 function SimulatePage() {
+  const saved = getSimulateSession()
   const { applied, selectAndApply } = useFilters()
   const [query, setQuery] = useState("")
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
-  const [lots, setLots] = useState(0.1)
-  const [commission, setCommission] = useState(7)
-  const [balance, setBalance] = useState(2000)
-  const [chartTf, setChartTf] = useState(10)
-  const [timeZone, setTimeZone] = useState("Europe/Bucharest")
-  const [runKey, setRunKey] = useState(0)
+  const [lots, setLots] = useState(saved.lots)
+  const [commission, setCommission] = useState(saved.commission)
+  const [balance, setBalance] = useState(saved.balance)
+  const [chartTf, setChartTf] = useState(saved.chartTf)
+  const [timeZone, setTimeZone] = useState(saved.timeZone)
+  const [runKey, setRunKey] = useState(saved.runKey)
   /** Snapshot of inputs used for the last Run — typing does not re-fetch. */
-  const [committed, setCommitted] = useState<{
-    symbol: string
-    strategyId: string
-    lots: number
-    commission: number
-    balance: number
-    chartTf: number
-  } | null>(null)
-  const [activeTab, setActiveTab] = useState<
-    "overview" | "analytics" | "trades" | "grid"
-  >("overview")
+  const [committed, setCommitted] = useState(saved.committed)
+  const [activeTab, setActiveTab] = useState(saved.activeTab)
   /** Which fill group is shown when Chart TF > 0 (both sims are always run). */
-  const [fillGroup, setFillGroup] = useState<"signal" | "barClose">("barClose")
+  const [fillGroup, setFillGroup] = useState(saved.fillGroup)
   const [strategyPickerOpen, setStrategyPickerOpen] = useState(false)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(saved.sidebarOpen)
+  const resumedRun = useRef(saved.runKey)
 
   const strategiesQ = useQuery({
     queryKey: ["strategies"],
@@ -219,15 +213,48 @@ function SimulatePage() {
   })
 
   useEffect(() => {
+    if (!committed) return
+    if (
+      committed.symbol === applied.symbol &&
+      committed.strategyId === applied.strategyId
+    ) {
+      return
+    }
     setRunKey(0)
     setCommitted(null)
-  }, [applied.symbol, applied.strategyId])
+  }, [applied.symbol, applied.strategyId, committed])
 
   useEffect(() => {
-    if (!simQ.data) return
-    // Prefer bar-close group when both exist; otherwise signal-only.
+    saveSimulateSession({
+      lots,
+      commission,
+      balance,
+      chartTf,
+      timeZone,
+      runKey,
+      committed,
+      activeTab,
+      fillGroup,
+      sidebarOpen,
+    })
+  }, [
+    lots,
+    commission,
+    balance,
+    chartTf,
+    timeZone,
+    runKey,
+    committed,
+    activeTab,
+    fillGroup,
+    sidebarOpen,
+  ])
+
+  useEffect(() => {
+    if (!simQ.data || runKey === 0 || resumedRun.current === runKey) return
+    resumedRun.current = runKey
     setFillGroup(simQ.data.barClose ? "barClose" : "signal")
-  }, [simQ.data])
+  }, [simQ.data, runKey])
 
   const settingsDirty = Boolean(
     committed &&

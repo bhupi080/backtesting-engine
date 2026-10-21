@@ -29,6 +29,14 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>
 }
 
+export type RiskRewardGrid = {
+  tp: number[]
+  sl: number[]
+  step: number
+  signal: number[][]
+  bar_close: number[][] | null
+}
+
 export type Dataset = {
   id: string
   symbol: string
@@ -299,6 +307,20 @@ export const api = {
     tp_atr_mult?: number
     sl_atr_mult?: number
   }) => getJson<SimulateResponse>("/risk-reward", p),
+  riskRewardGrid: (p: {
+    symbol: string
+    strategy_id: string
+    lots?: number
+    commission_per_lot?: number
+    chart_tf_minutes?: number
+    atr_bar_minutes?: number
+    atr_period?: number
+    tp_min: number
+    tp_max: number
+    sl_min: number
+    sl_max: number
+    step?: number
+  }) => getJson<RiskRewardGrid>("/risk-reward/grid", p),
   createTickJob: (body: TickJobCreate) =>
     postJson<TickJob>("/ticks/jobs", body),
   listTickJobs: (limit = 20) =>

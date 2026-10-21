@@ -240,6 +240,16 @@ class SimulateResponse(BaseModel):
     meta: dict[str, Any] | None = None
 
 
+class RiskRewardGridResponse(BaseModel):
+    """Net PnL for each take-profit multiple (rows) and stop multiple (columns)."""
+
+    tp: list[float]
+    sl: list[float]
+    step: float
+    signal: list[list[float]]
+    bar_close: list[list[float]] | None = None
+
+
 class SymbolStub(BaseModel):
     symbol: str
     detail: str = "stub"

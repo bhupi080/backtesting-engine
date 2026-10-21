@@ -472,3 +472,256 @@ def simulate_risk_reward(
         "exits": counts,
     }
     return result
+
+
+def multiplier_range(start: float, end: float, step: float = 0.1) -> list[float]:
+    """Inclusive multiples at `step`. Raises ValueError when the grid is too wide."""
+    lo = min(float(start), float(end))
+    hi = max(float(start), float(end))
+    if step <= 0:
+        raise ValueError("step must be positive")
+    count = int(round((hi - lo) / step))
+    if count > 40:
+        raise ValueError("range is wider than 40 steps")
+    return [round(lo + i * step, 10) for i in range(count + 1)]
+
+
+def first_exit_price(
+    events: list[tuple[int, float]],
+    side: str,
+    tp: float,
+    sl: float,
+    csv_price: float,
+) -> tuple[float, str]:
+    """First extreme tick that reaches TP or SL. SL wins on the same tick."""
+    for _ts, price in events:
+        if side == "long":
+            hit_sl = price <= sl
+            hit_tp = price >= tp
+        else:
+            hit_sl = price >= sl
+            hit_tp = price <= tp
+        if hit_sl:
+            return price, "sl"
+        if hit_tp:
+            return price, "tp"
+    return csv_price, "signal"
+
+
+def _extreme_ticks(
+    symbol: str,
+    setups: list[dict[str, Any]],
+    settings: Settings,
+) -> dict[int, list[tuple[int, float]]]:
+    """New high/low ticks on the mark side, from just after entry through the CSV exit."""
+    if not setups:
+        return {}
+    min_ms = min(int(s["entry_ms"]) for s in setups)
+    max_ms = max(int(s["deadline_ms"]) for s in setups)
+    files = _day_files_for_range(symbol, min_ms, max_ms, settings)
+    if not files:
+        return {}
+    values_sql = ", ".join(
+        "("
+        f"{int(s['trade_id'])}, {int(s['entry_ms'])}::BIGINT, "
+        f"{int(s['deadline_ms'])}::BIGINT, '{s['mark']}'"
+        ")"
+        for s in setups
+        if int(s["deadline_ms"]) > int(s["entry_ms"])
+    )
+    if not values_sql:
+        return {}
+    files_sql = ", ".join(f"'{p}'" for p in files)
+    sql = f"""
+        WITH spec AS (
+          SELECT * FROM (VALUES {values_sql})
+            AS t(trade_id, entry_ms, deadline_ms, mark_side)
+        ),
+        ticks AS (
+          SELECT timestamp_ms::BIGINT AS timestamp_ms,
+                 price::DOUBLE AS price,
+                 upper(side::VARCHAR) AS side
+          FROM read_parquet([{files_sql}])
+          WHERE timestamp_ms > {int(min_ms)} AND timestamp_ms <= {int(max_ms)}
+        ),
+        joined AS (
+          SELECT s.trade_id, t.timestamp_ms, t.price
+          FROM spec s
+          JOIN ticks t
+            ON t.side = s.mark_side
+           AND t.timestamp_ms > s.entry_ms
+           AND t.timestamp_ms <= s.deadline_ms
+        ),
+        running AS (
+          SELECT trade_id, timestamp_ms, price,
+                 max(price) OVER w AS run_max,
+                 min(price) OVER w AS run_min
+          FROM joined
+          WINDOW w AS (PARTITION BY trade_id ORDER BY timestamp_ms)
+        ),
+        lagged AS (
+          SELECT trade_id, timestamp_ms, price, run_max, run_min,
+                 lag(run_max) OVER w AS prev_max,
+                 lag(run_min) OVER w AS prev_min
+          FROM running
+          WINDOW w AS (PARTITION BY trade_id ORDER BY timestamp_ms)
+        )
+        SELECT trade_id, timestamp_ms, price
+        FROM lagged
+        WHERE prev_max IS NULL OR price > prev_max OR price < prev_min
+        ORDER BY trade_id, timestamp_ms
+    """
+    try:
+        rows = db.query(sql)
+    except Exception:
+        return {}
+    out: dict[int, list[tuple[int, float]]] = {}
+    for row in rows:
+        if row["timestamp_ms"] is None or row["price"] is None:
+            continue
+        out.setdefault(int(row["trade_id"]), []).append(
+            (int(row["timestamp_ms"]), float(row["price"]))
+        )
+    return out
+
+
+def _grid_for_fills(
+    symbol: str,
+    fills: list[TradeFill],
+    *,
+    lots: float,
+    commission_per_lot: float,
+    atr_bar_minutes: int,
+    atr_period: int,
+    tp_values: list[float],
+    sl_values: list[float],
+    settings: Settings,
+) -> list[list[float]]:
+    ready = [
+        fill
+        for fill in fills
+        if (
+            fill.status == "ok"
+            and fill.fill_entry_price is not None
+            and fill.fill_exit_price is not None
+            and fill.entry_fill_ms is not None
+            and fill.exit_fill_ms is not None
+            and fill.exit_fill_ms > fill.entry_fill_ms
+            and fill.side in {"long", "short"}
+        )
+    ]
+    width = len(sl_values)
+    if not ready:
+        return [[0.0 for _ in sl_values] for _ in tp_values]
+
+    bar_ms = int(atr_bar_minutes) * 60_000
+    warmup = bar_ms * (int(atr_period) * 5 + 2)
+    start_ms = min(int(f.entry_fill_ms or 0) for f in ready) - warmup
+    end_ms = max(int(f.entry_fill_ms or 0) for f in ready) + bar_ms
+    bars = _load_bid_bars(symbol, start_ms, end_ms, bar_ms, settings)
+    atrs = wilder_atr(bars, int(atr_period))
+
+    setups: list[dict[str, Any]] = []
+    for fill in ready:
+        entry_ms = int(fill.entry_fill_ms or 0)
+        atr = atr_asof(bars, atrs, entry_ms, bar_ms)
+        if atr is None or atr <= 0 or fill.fill_entry_price is None or fill.fill_exit_price is None:
+            continue
+        setups.append(
+            {
+                "trade_id": fill.trade_id,
+                "entry_ms": entry_ms,
+                "deadline_ms": int(fill.exit_fill_ms or entry_ms),
+                "entry_px": float(fill.fill_entry_price),
+                "csv_px": float(fill.fill_exit_price),
+                "side": fill.side,
+                "atr": atr,
+                "mark": _mark_side(fill.side),
+            }
+        )
+    events = _extreme_ticks(symbol, setups, settings)
+    commission = commission_per_lot * lots * 2
+    grid: list[list[float]] = []
+    for tp_mult in tp_values:
+        row: list[float] = []
+        for sl_mult in sl_values:
+            total = 0.0
+            for setup in setups:
+                tp, sl = level_prices(
+                    setup["side"], setup["entry_px"], setup["atr"], tp_mult, sl_mult
+                )
+                price, _reason = first_exit_price(
+                    events.get(setup["trade_id"], []),
+                    setup["side"],
+                    tp,
+                    sl,
+                    setup["csv_px"],
+                )
+                total += _pnl_usd(
+                    symbol, setup["side"], setup["entry_px"], price, lots
+                ) - commission
+            row.append(round(total, 2))
+        grid.append(row)
+    if not grid:
+        return [[0.0 for _ in range(width)] for _ in tp_values]
+    return grid
+
+
+def suggest_risk_reward(
+    symbol: str,
+    strategy_id: str,
+    *,
+    lots: float = 0.1,
+    commission_per_lot: float = 7.0,
+    chart_tf_minutes: int = 10,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    atr_bar_minutes: int = 60,
+    atr_period: int = 14,
+    tp_min: float = 2.0,
+    tp_max: float = 3.0,
+    sl_min: float = 1.0,
+    sl_max: float = 2.0,
+    step: float = 0.1,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Net PnL grid. Each cell is one TP multiple × one SL multiple."""
+    settings = settings or get_settings()
+    tp_values = multiplier_range(tp_min, tp_max, step)
+    sl_values = multiplier_range(sl_min, sl_max, step)
+    shared = dict(
+        lots=lots,
+        commission_per_lot=commission_per_lot,
+        atr_bar_minutes=atr_bar_minutes,
+        atr_period=atr_period,
+        tp_values=tp_values,
+        sl_values=sl_values,
+        settings=settings,
+    )
+    signal_fills = simulate_fills(
+        symbol,
+        strategy_id,
+        chart_tf_minutes=0,
+        from_ts=from_ts,
+        to_ts=to_ts,
+        settings=settings,
+    )
+    signal = _grid_for_fills(symbol, signal_fills, **shared)
+    bar_close = None
+    if chart_tf_minutes > 0:
+        bar_fills = simulate_fills(
+            symbol,
+            strategy_id,
+            chart_tf_minutes=chart_tf_minutes,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            settings=settings,
+        )
+        bar_close = _grid_for_fills(symbol, bar_fills, **shared)
+    return {
+        "tp": tp_values,
+        "sl": sl_values,
+        "step": step,
+        "signal": signal,
+        "bar_close": bar_close,
+    }

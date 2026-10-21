@@ -16,6 +16,7 @@ from app.models import (
     PaginatedTicks,
     PaginatedTrades,
     SchemaField,
+    RiskRewardGridResponse,
     SimulateResponse,
     StrategyInfo,
     SymbolStub,
@@ -199,6 +200,45 @@ def risk_reward_sim(
         sl_atr_mult=sl_atr_mult,
     )
     return SimulateResponse(**raw)
+
+
+@app.get("/risk-reward/grid", response_model=RiskRewardGridResponse)
+def risk_reward_grid(
+    symbol: str = Query(...),
+    strategy_id: str = Query(...),
+    from_ts: str | None = Query(None, alias="from"),
+    to_ts: str | None = Query(None, alias="to"),
+    lots: float = Query(0.1, ge=0.01, le=10.0),
+    commission_per_lot: float = Query(7.0, ge=0.0, le=50.0),
+    chart_tf_minutes: int = Query(10, ge=0, le=240),
+    atr_bar_minutes: int = Query(60, ge=1, le=1440),
+    atr_period: int = Query(14, ge=2, le=500),
+    tp_min: float = Query(2.0, gt=0.0, le=50.0),
+    tp_max: float = Query(3.0, gt=0.0, le=50.0),
+    sl_min: float = Query(1.0, gt=0.0, le=50.0),
+    sl_max: float = Query(2.0, gt=0.0, le=50.0),
+    step: float = Query(0.1, ge=0.1, le=1.0),
+) -> RiskRewardGridResponse:
+    try:
+        raw = risk_reward.suggest_risk_reward(
+            symbol,
+            strategy_id,
+            lots=lots,
+            commission_per_lot=commission_per_lot,
+            chart_tf_minutes=chart_tf_minutes,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            atr_bar_minutes=atr_bar_minutes,
+            atr_period=atr_period,
+            tp_min=tp_min,
+            tp_max=tp_max,
+            sl_min=sl_min,
+            sl_max=sl_max,
+            step=step,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return RiskRewardGridResponse(**raw)
 
 
 @app.get("/market-hours/symbols", response_model=list[str])
