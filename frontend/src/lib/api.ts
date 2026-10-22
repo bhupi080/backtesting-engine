@@ -15,10 +15,10 @@ async function getJson<T>(path: string, params?: Record<string, string | number 
   return res.json() as Promise<T>
 }
 
-async function postJson<T>(path: string, body?: unknown): Promise<T> {
+async function sendJson<T>(method: "POST" | "PUT", path: string, body?: unknown): Promise<T> {
   const url = new URL(path, API_BASE)
   const res = await fetch(url, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
@@ -27,6 +27,22 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
     throw new Error(`${res.status}: ${text}`)
   }
   return res.json() as Promise<T>
+}
+
+async function postJson<T>(path: string, body?: unknown): Promise<T> {
+  return sendJson<T>("POST", path, body)
+}
+
+async function putJson<T>(path: string, body?: unknown): Promise<T> {
+  return sendJson<T>("PUT", path, body)
+}
+
+async function deleteReq(path: string): Promise<void> {
+  const res = await fetch(new URL(path, API_BASE), { method: "DELETE" })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`${res.status}: ${text}`)
+  }
 }
 
 export type RiskRewardGrid = {
@@ -145,6 +161,8 @@ export type SimulateResponse = {
     tp_pnl_usd?: number | null
     sl_pnl_usd?: number | null
     exit_reason?: string | null
+    symbol?: string | null
+    strategy_id?: string | null
   }[]
   equity: { t: string; equity: number; drawdown: number; exit_reason?: string | null }[]
   /** trade_id → intra-trade floating PnL path */
@@ -329,4 +347,48 @@ export const api = {
     getJson<TickJob>(`/ticks/jobs/${id}`, { log_tail }),
   cancelTickJob: (id: string) =>
     postJson<TickJob>(`/ticks/jobs/${id}/cancel`),
+  vips: () => getJson<VipAccount[]>("/vips"),
+  createVip: (name: string) => postJson<VipAccount>("/vips", { name }),
+  updateVip: (id: string, body: { name?: string; lines?: VipLine[] }) =>
+    putJson<VipAccount>(`/vips/${id}`, body),
+  deleteVip: (id: string) => deleteReq(`/vips/${id}`),
+  runVip: (id: string, chart_tf_minutes: number, analysis_tz?: string) => {
+    const params = new URLSearchParams({ chart_tf_minutes: String(chart_tf_minutes) })
+    if (analysis_tz) params.set("analysis_tz", analysis_tz)
+    return postJson<VipRun>(`/vips/${id}/run?${params.toString()}`)
+  },
+}
+
+export type VipLine = {
+  id: string
+  symbol: string
+  strategy_id: string
+  atr_bar_minutes: number
+  atr_period: number
+  tp_atr_mult: number
+  sl_atr_mult: number
+  lots: number
+  commission_per_lot: number
+  starting_balance: number
+  chart_tf_minutes: number
+}
+
+export type VipAccount = {
+  id: string
+  name: string
+  lines: VipLine[]
+}
+
+export type VipRun = {
+  vip_id: string
+  name: string
+  chart_tf_minutes: number
+  lines: {
+    line: VipLine
+    signal: SimulateResponse | null
+    bar_close: SimulateResponse | null
+    error: string | null
+  }[]
+  signal: SimulateResponse
+  bar_close: SimulateResponse | null
 }

@@ -107,6 +107,8 @@ class PaginatedTrades(BaseModel):
 
 class SimTradeResult(BaseModel):
     trade_id: int
+    symbol: str | None = None
+    strategy_id: str | None = None
     side: str
     open_time: str | None = None
     close_time: str | None = None
@@ -259,6 +261,51 @@ class CompareStub(BaseModel):
     status: str = "stub"
     message: str = "Compare endpoint not implemented yet"
     extra: dict[str, Any] = Field(default_factory=dict)
+
+
+class VipLine(BaseModel):
+    id: str
+    symbol: str
+    strategy_id: str
+    atr_bar_minutes: int = 60
+    atr_period: int = 14
+    tp_atr_mult: float = 2.0
+    sl_atr_mult: float = 1.0
+    lots: float = 0.1
+    commission_per_lot: float = 7.0
+    starting_balance: float = 2000.0
+    chart_tf_minutes: int = 0
+
+
+class VipAccount(BaseModel):
+    id: str
+    name: str
+    lines: list[VipLine] = Field(default_factory=list)
+
+
+class VipCreateRequest(BaseModel):
+    name: str
+
+
+class VipUpdateRequest(BaseModel):
+    name: str | None = None
+    lines: list[VipLine] | None = None
+
+
+class VipRunLine(BaseModel):
+    line: VipLine
+    signal: SimulateResponse | None = None
+    bar_close: SimulateResponse | None = None
+    error: str | None = None
+
+
+class VipRunResponse(BaseModel):
+    vip_id: str
+    name: str
+    chart_tf_minutes: int = 0
+    lines: list[VipRunLine]
+    signal: SimulateResponse
+    bar_close: SimulateResponse | None = None
 
 
 class TickJobCreateRequest(BaseModel):

@@ -22,8 +22,12 @@ from app.models import (
     SymbolStub,
     TickJobCreateRequest,
     TickJobResponse,
+    VipAccount,
+    VipCreateRequest,
+    VipRunResponse,
+    VipUpdateRequest,
 )
-from app import risk_reward, tick_sim, ticks_service, trades_service
+from app import risk_reward, tick_sim, ticks_service, trades_service, vip_sim, vip_store
 from app.tick_download import jobs as tick_jobs
 from app.tick_download.jobs import TickJobCreate
 
@@ -239,6 +243,58 @@ def risk_reward_grid(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return RiskRewardGridResponse(**raw)
+
+
+@app.get("/vips", response_model=list[VipAccount])
+def vips() -> list[VipAccount]:
+    return [VipAccount(**row) for row in vip_store.list_vips()]
+
+
+@app.post("/vips", response_model=VipAccount, status_code=201)
+def create_vip(body: VipCreateRequest) -> VipAccount:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name is required")
+    return VipAccount(**vip_store.create_vip(name))
+
+
+@app.put("/vips/{vip_id}", response_model=VipAccount)
+def update_vip(vip_id: str, body: VipUpdateRequest) -> VipAccount:
+    lines = None
+    if body.lines is not None:
+        lines = [line.model_dump() for line in body.lines]
+        try:
+            vip_sim.validate_lines(lines)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if body.name is not None and not body.name.strip():
+        raise HTTPException(status_code=400, detail="Name is required")
+    saved = vip_store.update_vip(vip_id, name=body.name, lines=lines)
+    if saved is None:
+        raise HTTPException(status_code=404, detail="VIP not found")
+    return VipAccount(**saved)
+
+
+@app.delete("/vips/{vip_id}", status_code=204)
+def delete_vip(vip_id: str) -> None:
+    if not vip_store.delete_vip(vip_id):
+        raise HTTPException(status_code=404, detail="VIP not found")
+
+
+@app.post("/vips/{vip_id}/run", response_model=VipRunResponse)
+def run_vip(
+    vip_id: str,
+    chart_tf_minutes: int = Query(10, ge=0, le=240),
+    analysis_tz: str | None = Query(None),
+) -> VipRunResponse:
+    vip = vip_store.get_vip(vip_id)
+    if vip is None:
+        raise HTTPException(status_code=404, detail="VIP not found")
+    try:
+        raw = vip_sim.run_vip(vip, chart_tf_minutes=chart_tf_minutes, analysis_tz=analysis_tz)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return VipRunResponse(**raw)
 
 
 @app.get("/market-hours/symbols", response_model=list[str])

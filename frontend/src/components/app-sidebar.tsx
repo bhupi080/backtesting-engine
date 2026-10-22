@@ -2,6 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router"
 import {
   Activity,
   BarChart3,
+  Crown,
   Database,
   Scale,
   Home,
@@ -36,6 +37,7 @@ const nav: {
   { to: "/trades", label: "Trades", icon: BarChart3, color: "text-violet-400" },
   { to: "/simulate", label: "Simulate", icon: Activity, color: "text-rose-400" },
   { to: "/compare", label: "Risk / Reward", icon: Scale, color: "text-orange-400" },
+  { to: "/vip", label: "VIP", icon: Crown, color: "text-amber-400" },
 ]
 
 export function AppSidebar() {

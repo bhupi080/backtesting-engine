@@ -1,6 +1,7 @@
 import {
   Activity,
   BarChart3,
+  Crown,
   Database,
   Scale,
   Home,
@@ -49,6 +50,13 @@ export function pageMetaForPath(pathname: string): PageMeta {
       title: "Risk / Reward",
       icon: Scale,
       iconClass: "text-orange-500 dark:text-orange-400",
+    }
+  }
+  if (pathname.startsWith("/vip")) {
+    return {
+      title: "VIP",
+      icon: Crown,
+      iconClass: "text-amber-500 dark:text-amber-400",
     }
   }
   if (pathname.startsWith("/symbols")) {
