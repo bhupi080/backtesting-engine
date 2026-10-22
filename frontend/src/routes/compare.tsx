@@ -1205,28 +1205,51 @@ function SuggestionGrid({
           <table className="w-full border-collapse text-[11px]">
             <thead>
               <tr className="border-b border-border bg-muted/50">
-                <th className="sticky left-0 bg-muted/80 px-2 py-2 text-left font-medium text-muted-foreground">
-                  TP \ SL
+                <th className="sticky left-0 bg-muted px-2 py-2 text-left font-medium">
+                  <span className="text-emerald-600 dark:text-emerald-400">TP</span>
+                  <span className="mx-1 text-muted-foreground">/</span>
+                  <span className="text-rose-600 dark:text-rose-400">SL</span>
                 </th>
-                {data.sl.map((sl) => (
-                  <th key={sl} className="px-2 py-2 text-right font-mono font-medium text-muted-foreground">
-                    ×{sl.toFixed(1)}
-                  </th>
-                ))}
+                {data.sl.map((sl) => {
+                  const activeSl = Math.abs(sl - slMult) < 0.001
+                  return (
+                    <th
+                      key={sl}
+                      className={cn(
+                        "px-2 py-2 text-center font-mono font-semibold",
+                        activeSl
+                          ? "bg-rose-500/25 text-rose-700 ring-1 ring-inset ring-rose-500 dark:text-rose-300"
+                          : "text-rose-700/90 dark:text-rose-400",
+                      )}
+                    >
+                      ×{sl.toFixed(1)}
+                    </th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
-              {data.tp.map((tp, rowIndex) => (
+              {data.tp.map((tp, rowIndex) => {
+                const activeTp = Math.abs(tp - tpMult) < 0.001
+                return (
                 <tr key={tp} className="border-b border-border/60 last:border-0">
-                  <th className="sticky left-0 bg-background px-2 py-1.5 text-left font-mono font-medium text-muted-foreground">
+                  <th
+                    className={cn(
+                      "sticky left-0 px-2 py-1.5 text-left font-mono font-semibold",
+                      activeTp
+                        ? "bg-emerald-500/25 text-emerald-700 ring-1 ring-inset ring-emerald-500 dark:text-emerald-300"
+                        : "bg-background text-emerald-700/90 dark:text-emerald-400",
+                    )}
+                  >
                     ×{tp.toFixed(1)}
                   </th>
                   {data.sl.map((sl, colIndex) => {
                     const pnl = matrix[rowIndex]?.[colIndex] ?? 0
                     const strength = Math.min(0.45, (Math.abs(pnl) / maxAbs) * 0.45)
-                    const selected = Math.abs(tp - tpMult) < 0.001 && Math.abs(sl - slMult) < 0.001
+                    const activeSl = Math.abs(sl - slMult) < 0.001
+                    const selected = activeTp && activeSl
                     return (
-                      <td key={sl} className="p-0.5">
+                      <td key={sl} className={cn("p-0.5", activeSl && "bg-rose-500/10", activeTp && "bg-emerald-500/10")}>
                         <button
                           type="button"
                           onClick={() => setPending({ tp, sl, pnl })}
@@ -1248,7 +1271,8 @@ function SuggestionGrid({
                     )
                   })}
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
