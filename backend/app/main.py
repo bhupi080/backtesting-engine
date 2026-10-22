@@ -25,6 +25,8 @@ from app.models import (
     VipAccount,
     VipCreateRequest,
     VipRunResponse,
+    VipTargetGridRequest,
+    VipTargetGridResponse,
     VipUpdateRequest,
 )
 from app import risk_reward, tick_sim, ticks_service, trades_service, vip_sim, vip_store
@@ -269,10 +271,17 @@ def update_vip(vip_id: str, body: VipUpdateRequest) -> VipAccount:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     if body.name is not None and not body.name.strip():
         raise HTTPException(status_code=400, detail="Name is required")
+    if body.account_targets_enabled is True and (
+        body.account_tp_usd is None or body.account_sl_usd is None
+    ):
+        raise HTTPException(status_code=400, detail="Take profit and stop must both be greater than zero")
     saved = vip_store.update_vip(
         vip_id,
         name=body.name,
         starting_balance=body.starting_balance,
+        account_targets_enabled=body.account_targets_enabled,
+        account_tp_usd=body.account_tp_usd,
+        account_sl_usd=body.account_sl_usd,
         lines=lines,
     )
     if saved is None:
@@ -299,6 +308,30 @@ def run_vip(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return VipRunResponse(**raw)
+
+
+@app.post("/vips/{vip_id}/targets", response_model=VipTargetGridResponse)
+def vip_targets(
+    vip_id: str,
+    body: VipTargetGridRequest,
+    analysis_tz: str | None = Query(None),
+) -> VipTargetGridResponse:
+    vip = vip_store.get_vip(vip_id)
+    if vip is None:
+        raise HTTPException(status_code=404, detail="VIP not found")
+    try:
+        raw = vip_sim.suggest_vip_targets(
+            vip,
+            tp_from=body.tp_from,
+            tp_to=body.tp_to,
+            sl_from=body.sl_from,
+            sl_to=body.sl_to,
+            step=body.step,
+            analysis_tz=analysis_tz,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return VipTargetGridResponse(**raw)
 
 
 @app.get("/market-hours/symbols", response_model=list[str])

@@ -281,6 +281,9 @@ class VipAccount(BaseModel):
     id: str
     name: str
     starting_balance: float = 2000.0
+    account_targets_enabled: bool = False
+    account_tp_usd: float | None = None
+    account_sl_usd: float | None = None
     lines: list[VipLine] = Field(default_factory=list)
 
 
@@ -291,6 +294,9 @@ class VipCreateRequest(BaseModel):
 class VipUpdateRequest(BaseModel):
     name: str | None = None
     starting_balance: float | None = Field(default=None, ge=100, le=1_000_000)
+    account_targets_enabled: bool | None = None
+    account_tp_usd: float | None = Field(default=None, gt=0, le=1_000_000)
+    account_sl_usd: float | None = Field(default=None, gt=0, le=1_000_000)
     lines: list[VipLine] | None = None
 
 
@@ -301,6 +307,40 @@ class VipRunLine(BaseModel):
     error: str | None = None
 
 
+class AccountTargetHit(BaseModel):
+    hit: Literal["tp", "sl", "none"]
+    profit: float
+
+
+class AccountTargetResult(BaseModel):
+    enabled: bool = False
+    take_profit: float
+    stop: float
+    signal: AccountTargetHit
+    bar_close: AccountTargetHit | None = None
+
+
+class AccountTargetCell(BaseModel):
+    hit: Literal["tp", "sl", "none"]
+    profit: float
+
+
+class VipTargetGridRequest(BaseModel):
+    tp_from: float = Field(gt=0, le=1_000_000)
+    tp_to: float = Field(gt=0, le=1_000_000)
+    sl_from: float = Field(gt=0, le=1_000_000)
+    sl_to: float = Field(gt=0, le=1_000_000)
+    step: float = Field(gt=0, le=100_000)
+
+
+class VipTargetGridResponse(BaseModel):
+    tp: list[float]
+    sl: list[float]
+    step: float
+    signal: list[list[AccountTargetCell]]
+    bar_close: list[list[AccountTargetCell]] | None = None
+
+
 class VipRunResponse(BaseModel):
     vip_id: str
     name: str
@@ -308,6 +348,7 @@ class VipRunResponse(BaseModel):
     lines: list[VipRunLine]
     signal: SimulateResponse
     bar_close: SimulateResponse | None = None
+    account_target: AccountTargetResult | None = None
 
 
 class TickJobCreateRequest(BaseModel):

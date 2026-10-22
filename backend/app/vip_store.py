@@ -63,6 +63,9 @@ def update_vip(
     *,
     name: str | None = None,
     starting_balance: float | None = None,
+    account_targets_enabled: bool | None = None,
+    account_tp_usd: float | None = None,
+    account_sl_usd: float | None = None,
     lines: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     with _LOCK:
@@ -74,6 +77,12 @@ def update_vip(
                 vip["name"] = name.strip()
             if starting_balance is not None:
                 vip["starting_balance"] = starting_balance
+            if account_targets_enabled is not None:
+                vip["account_targets_enabled"] = bool(account_targets_enabled)
+            if account_tp_usd is not None:
+                vip["account_tp_usd"] = account_tp_usd
+            if account_sl_usd is not None:
+                vip["account_sl_usd"] = account_sl_usd
             if lines is not None:
                 vip["lines"] = lines
             _write(vips)

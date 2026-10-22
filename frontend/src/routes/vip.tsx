@@ -35,7 +35,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { api, type StrategyInfo, type VipAccount, type VipLine, type VipRun } from "@/lib/api"
+import {
+  api,
+  type AccountTargetHit,
+  type StrategyInfo,
+  type VipAccount,
+  type VipLine,
+  type VipRun,
+} from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
   SimAnalyticsPanel,
@@ -76,7 +83,7 @@ const LINE_COLORS = [
   "#facc15",
 ]
 
-type TabId = "overview" | "analytics" | "trades"
+type TabId = "overview" | "analytics" | "trades" | "suggestions"
 
 function blankLine(): VipLine {
   return {
@@ -127,6 +134,29 @@ function formatMult(n: number): string {
   return Number.isInteger(n) ? String(n) : n.toFixed(1)
 }
 
+function setupKey(
+  lines: VipLine[],
+  balance: number,
+  targetsOn: boolean,
+  accountTp: number,
+  accountSl: number,
+) {
+  return JSON.stringify({
+    lines,
+    balance,
+    targetsOn,
+    accountTp: targetsOn ? accountTp : null,
+    accountSl: targetsOn ? accountSl : null,
+  })
+}
+
+function targetSentence(hit: AccountTargetHit | null | undefined): string {
+  if (!hit) return ""
+  if (hit.hit === "tp") return `Took profit at ${formatPnl(hit.profit)}`
+  if (hit.hit === "sl") return `Stopped at ${formatPnl(hit.profit)}`
+  return `Ended at ${formatPnl(hit.profit)}`
+}
+
 function atrLabel(minutes: number): string {
   return ATR_BARS.find((bar) => Number(bar.value) === minutes)?.label ?? `${minutes} min`
 }
@@ -138,6 +168,9 @@ function VipPage() {
   const [name, setName] = useState("")
   const [timeZone, setTimeZone] = useState("Europe/Bucharest")
   const [balance, setBalance] = useState(2000)
+  const [targetsOn, setTargetsOn] = useState(false)
+  const [accountTp, setAccountTp] = useState(1000)
+  const [accountSl, setAccountSl] = useState(500)
   const [fillGroup, setFillGroup] = useState<"signal" | "barClose">("signal")
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [tab, setTab] = useState<TabId>("overview")
@@ -154,15 +187,40 @@ function VipPage() {
   useEffect(() => {
     setName(vip?.name ?? "")
     setBalance(vip?.starting_balance ?? 2000)
-  }, [vip?.id, vip?.name, vip?.starting_balance])
+    setTargetsOn(Boolean(vip?.account_targets_enabled))
+    setAccountTp(vip?.account_tp_usd ?? 1000)
+    setAccountSl(vip?.account_sl_usd ?? 500)
+  }, [
+    vip?.id,
+    vip?.name,
+    vip?.starting_balance,
+    vip?.account_targets_enabled,
+    vip?.account_tp_usd,
+    vip?.account_sl_usd,
+  ])
 
   useEffect(() => {
     setTradeLineId(null)
   }, [vip?.id])
 
   const save = useMutation({
-    mutationFn: (body: { id: string; name?: string; lines?: VipLine[]; starting_balance?: number }) =>
-      api.updateVip(body.id, { name: body.name, lines: body.lines }),
+    mutationFn: (body: {
+      id: string
+      name?: string
+      lines?: VipLine[]
+      starting_balance?: number
+      account_targets_enabled?: boolean
+      account_tp_usd?: number
+      account_sl_usd?: number
+    }) =>
+      api.updateVip(body.id, {
+        name: body.name,
+        lines: body.lines,
+        starting_balance: body.starting_balance,
+        account_targets_enabled: body.account_targets_enabled,
+        account_tp_usd: body.account_tp_usd,
+        account_sl_usd: body.account_sl_usd,
+      }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["vips"] })
     },
@@ -192,18 +250,24 @@ function VipPage() {
         name: name.trim() || vip.name,
         lines: vip.lines,
         starting_balance: balance,
+        account_targets_enabled: targetsOn,
+        ...(accountTp > 0 ? { account_tp_usd: accountTp } : {}),
+        ...(accountSl > 0 ? { account_sl_usd: accountSl } : {}),
       })
       return api.runVip(vip.id, timeZone)
     },
     onSuccess: () => {
-      setRanLines(JSON.stringify({ lines: vip?.lines ?? [], balance }))
+      setRanLines(setupKey(vip?.lines ?? [], balance, targetsOn, accountTp, accountSl))
       setFillGroup((vip?.lines ?? []).some((line) => line.chart_tf_minutes > 0) ? "barClose" : "signal")
     },
   })
 
   const accountIds = new Set((vipsQ.data ?? []).map((row) => row.id))
   const visibleRun = run.data && accountIds.has(run.data.vip_id) ? run.data : null
-  const stale = Boolean(visibleRun) && ranLines !== JSON.stringify({ lines: vip?.lines ?? [], balance })
+  const stale =
+    Boolean(visibleRun) &&
+    ranLines !== setupKey(vip?.lines ?? [], balance, targetsOn, accountTp, accountSl)
+  const targetsReady = !targetsOn || (accountTp > 0 && accountSl > 0)
   const showBarClose = Boolean(visibleRun?.bar_close) && fillGroup === "barClose"
   const combined = showBarClose ? visibleRun?.bar_close : visibleRun?.signal
   const summary = combined?.summary
@@ -221,6 +285,24 @@ function VipPage() {
   function persistLines(lines: VipLine[]) {
     if (!vip) return
     save.mutate({ id: vip.id, lines })
+  }
+
+  function persistTargets(next: { enabled: boolean; tp: number; sl: number }) {
+    if (!vip) return
+    if (next.enabled && (next.tp <= 0 || next.sl <= 0)) return
+    save.mutate({
+      id: vip.id,
+      account_targets_enabled: next.enabled,
+      ...(next.tp > 0 ? { account_tp_usd: next.tp } : {}),
+      ...(next.sl > 0 ? { account_sl_usd: next.sl } : {}),
+    })
+  }
+
+  function applyTarget(tp: number, sl: number) {
+    setTargetsOn(true)
+    setAccountTp(tp)
+    setAccountSl(sl)
+    persistTargets({ enabled: true, tp, sl })
   }
 
   return (
@@ -300,6 +382,42 @@ function VipPage() {
                       save.mutate({ id: vip.id, starting_balance: balance })
                     }}
                   />
+                  <label className="flex items-center gap-2 text-[12px]">
+                    <input
+                      type="checkbox"
+                      className="size-3.5 accent-amber-500"
+                      checked={targetsOn}
+                      onChange={(event) => {
+                        const next = event.target.checked
+                        setTargetsOn(next)
+                        persistTargets({ enabled: next, tp: accountTp, sl: accountSl })
+                      }}
+                    />
+                    Account take profit and stop
+                  </label>
+                  {targetsOn ? (
+                    <>
+                      <NumberField
+                        label="Take profit $"
+                        value={accountTp}
+                        step={100}
+                        min={1}
+                        onChange={setAccountTp}
+                        onBlur={() => persistTargets({ enabled: true, tp: accountTp, sl: accountSl })}
+                      />
+                      <NumberField
+                        label="Stop $"
+                        value={accountSl}
+                        step={100}
+                        min={1}
+                        onChange={setAccountSl}
+                        onBlur={() => persistTargets({ enabled: true, tp: accountTp, sl: accountSl })}
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Both are required. Stop is a loss, so 500 closes the account at −500.
+                      </p>
+                    </>
+                  ) : null}
                   <div className="flex items-center justify-between">
                     <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
                       Symbols
@@ -349,7 +467,7 @@ function VipPage() {
               <Button
                 type="button"
                 className="w-full"
-                disabled={!vip || vip.lines.length === 0 || run.isPending}
+                disabled={!vip || vip.lines.length === 0 || run.isPending || !targetsReady}
                 onClick={() => run.mutate()}
               >
                 <Play className="size-3.5" />
@@ -358,6 +476,10 @@ function VipPage() {
               {save.error || create.error || run.error ? (
                 <p className="mt-2 text-[11px] text-rose-500">
                   {(save.error ?? create.error ?? run.error)?.message}
+                </p>
+              ) : !targetsReady ? (
+                <p className="mt-2 text-[11px] text-muted-foreground">
+                  Enter a take profit and a stop above zero.
                 </p>
               ) : null}
             </div>
@@ -411,6 +533,16 @@ function VipPage() {
                     {visibleRun.lines.length} {visibleRun.lines.length === 1 ? "symbol" : "symbols"}
                     {stale ? " · settings changed, run again" : ""}
                   </p>
+                  {visibleRun.account_target?.enabled ? (
+                    <p className="text-[11px] text-muted-foreground">
+                      Take profit {formatPnl(visibleRun.account_target.take_profit)} · stop{" "}
+                      {formatPnl(-visibleRun.account_target.stop)}
+                      {" · "}
+                      {targetSentence(
+                        showBarClose ? visibleRun.account_target.bar_close : visibleRun.account_target.signal,
+                      )}
+                    </p>
+                  ) : null}
                 </div>
                 <div className="grid shrink-0 grid-cols-2 gap-1.5 lg:w-[22rem]">
                   <FillGroupCard
@@ -438,6 +570,7 @@ function VipPage() {
                     ["overview", "Overview"],
                     ["analytics", "Analytics"],
                     ["trades", "Trades"],
+                    ["suggestions", "Suggestions"],
                   ] as const
                 ).map(([id, label]) => (
                   <button
@@ -550,7 +683,7 @@ function VipPage() {
                     equity={chartEquity}
                     timeZone={timeZone}
                   />
-                ) : (
+                ) : tab === "trades" ? (
                   <VipTradesPanel
                     lines={visibleRun.lines.map((row) => row.line)}
                     trades={combined.trades}
@@ -558,6 +691,23 @@ function VipPage() {
                     timeZone={timeZone}
                     lineId={tradeLineId}
                     onLineId={setTradeLineId}
+                  />
+                ) : (
+                  <VipSuggestions
+                    key={vip.id}
+                    vipId={vip.id}
+                    lines={vip.lines}
+                    timeZone={timeZone}
+                    fillGroup={showBarClose ? "barClose" : "signal"}
+                    fillLabel={
+                      showBarClose
+                        ? `Bar close · ${barCloseCardLabel(visibleRun.lines.map((row) => row.line))}`
+                        : "At signal · 0m"
+                    }
+                    targetsOn={targetsOn}
+                    accountTp={accountTp}
+                    accountSl={accountSl}
+                    onApply={applyTarget}
                   />
                 )}
               </div>
@@ -1233,6 +1383,177 @@ function SymbolFilterChip({
     >
       {children}
     </button>
+  )
+}
+
+function VipSuggestions({
+  vipId,
+  lines,
+  timeZone,
+  fillGroup,
+  fillLabel,
+  targetsOn,
+  accountTp,
+  accountSl,
+  onApply,
+}: {
+  vipId: string
+  lines: VipLine[]
+  timeZone: string
+  fillGroup: "signal" | "barClose"
+  fillLabel: string
+  targetsOn: boolean
+  accountTp: number
+  accountSl: number
+  onApply: (tp: number, sl: number) => void
+}) {
+  const [tpFrom, setTpFrom] = useState(500)
+  const [tpTo, setTpTo] = useState(1000)
+  const [slFrom, setSlFrom] = useState(100)
+  const [slTo, setSlTo] = useState(400)
+  const [step, setStep] = useState(100)
+  const [range, setRange] = useState<{
+    tpFrom: number
+    tpTo: number
+    slFrom: number
+    slTo: number
+    step: number
+  } | null>(null)
+  const [pending, setPending] = useState<{ tp: number; sl: number } | null>(null)
+  const rangeReady = tpFrom > 0 && tpTo >= tpFrom && slFrom > 0 && slTo >= slFrom && step > 0
+  const gridQ = useQuery({
+    queryKey: ["vip-targets", vipId, timeZone, lines, range],
+    queryFn: () =>
+      api.vipTargetGrid(
+        vipId,
+        {
+          tp_from: range!.tpFrom,
+          tp_to: range!.tpTo,
+          sl_from: range!.slFrom,
+          sl_to: range!.slTo,
+          step: range!.step,
+        },
+        timeZone,
+      ),
+    enabled: range !== null,
+  })
+  const data = gridQ.data
+  const matrix = fillGroup === "barClose" && data?.bar_close ? data.bar_close : data?.signal
+
+  return (
+    <div className="flex flex-col gap-3 p-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <p className="text-sm font-medium tracking-tight">Account suggestions</p>
+          <p className="mt-0.5 max-w-xl text-[11px] text-muted-foreground">
+            {fillLabel}. Dollars for the whole account. Press Build, then choose a cell. The equity curve stays as it is until you run again.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="w-24"><NumberField label="TP from" value={tpFrom} onChange={setTpFrom} step={100} min={1} /></div>
+          <div className="w-24"><NumberField label="TP to" value={tpTo} onChange={setTpTo} step={100} min={1} /></div>
+          <div className="w-24"><NumberField label="SL from" value={slFrom} onChange={setSlFrom} step={100} min={1} /></div>
+          <div className="w-24"><NumberField label="SL to" value={slTo} onChange={setSlTo} step={100} min={1} /></div>
+          <div className="w-24"><NumberField label="Step" value={step} onChange={setStep} step={50} min={1} /></div>
+          <Button
+            type="button"
+            size="sm"
+            className="h-8"
+            disabled={!rangeReady || gridQ.isFetching}
+            onClick={() => setRange({ tpFrom, tpTo, slFrom, slTo, step })}
+          >
+            {range ? "Update" : "Build"}
+          </Button>
+        </div>
+      </div>
+      {range === null ? (
+        <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
+          Press Build to fill the table. This works with the account checkbox off.
+        </div>
+      ) : gridQ.isFetching ? (
+        <LoadingState title="Building the table" message="Replaying each dollar pair on the simulated trades." />
+      ) : gridQ.isError ? (
+        <p className="text-sm text-destructive">{gridQ.error.message}</p>
+      ) : data && matrix ? (
+        <div className="overflow-x-auto rounded-lg border border-border">
+          <table className="w-full border-collapse text-[11px]">
+            <thead>
+              <tr className="border-b border-border bg-muted/50">
+                <th className="sticky left-0 bg-muted px-2 py-2 text-left font-medium">
+                  <span className="text-emerald-600 dark:text-emerald-400">TP</span>
+                  <span className="mx-1 text-muted-foreground">/</span>
+                  <span className="text-rose-600 dark:text-rose-400">SL</span>
+                </th>
+                {data.sl.map((sl) => (
+                  <th key={sl} className="px-2 py-2 text-center font-mono font-semibold text-rose-700 dark:text-rose-400">
+                    {formatPnl(-sl)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.tp.map((tp, rowIndex) => (
+                <tr key={tp} className="border-b border-border/60 last:border-0">
+                  <th className="sticky left-0 bg-background px-2 py-1.5 text-left font-mono font-semibold text-emerald-700 dark:text-emerald-400">
+                    {formatPnl(tp)}
+                  </th>
+                  {data.sl.map((sl, colIndex) => {
+                    const cell = matrix[rowIndex]?.[colIndex]
+                    if (!cell) return <td key={sl} />
+                    const selected = targetsOn && tp === accountTp && sl === accountSl
+                    return (
+                      <td key={sl} className="p-1">
+                        <button
+                          type="button"
+                          onClick={() => setPending({ tp, sl })}
+                          className={cn(
+                            "w-full rounded-md px-2 py-1.5 text-center",
+                            cell.hit === "tp" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+                            cell.hit === "sl" && "bg-rose-500/15 text-rose-700 dark:text-rose-300",
+                            cell.hit === "none" && "text-muted-foreground",
+                            selected && "ring-1 ring-inset ring-amber-500",
+                          )}
+                        >
+                          <span className="block text-[10px]">
+                            {cell.hit === "tp" ? "Take profit" : cell.hit === "sl" ? "Stop" : "End"}
+                          </span>
+                          <span className="font-mono">{formatPnl(cell.profit)}</span>
+                        </button>
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      <Dialog open={pending !== null} onOpenChange={(open) => { if (!open) setPending(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Use this take profit and stop?</DialogTitle>
+            <DialogDescription>
+              Take profit {formatPnl(pending?.tp)} and stop {formatPnl(pending ? -pending.sl : null)}. The account checkbox turns on. Run again to update the equity curve.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPending(null)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (!pending) return
+                onApply(pending.tp, pending.sl)
+                setPending(null)
+              }}
+            >
+              Use these
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   )
 }
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from app import risk_reward, tick_sim
+from app import account_targets, risk_reward, tick_sim
 from app.config import Settings, get_settings
 from app.tick_sim import _SESSION_ASIA, _SESSION_EU, _compute_analytics
 
@@ -48,12 +48,63 @@ def run_vip(
     settings: Settings | None = None,
 ) -> dict[str, Any]:
     settings = settings or get_settings()
+    targets = account_targets.configured_targets(vip)
+    books = _simulate_vip(vip, analysis_tz=analysis_tz, settings=settings)
+    account_target = None
+    if targets is not None:
+        take_profit, stop = targets
+        signal_hit = account_targets.apply_account_targets(books["signal_ok"], take_profit, stop)
+        bar_hit = (
+            account_targets.apply_account_targets(books["bar_ok"], take_profit, stop)
+            if books["bar_ok"]
+            else None
+        )
+        account_target = {
+            "enabled": True,
+            "take_profit": take_profit,
+            "stop": stop,
+            "signal": signal_hit,
+            "bar_close": bar_hit,
+        }
+    return _pack_vip(vip, books, account_target=account_target)
+
+
+def suggest_vip_targets(
+    vip: dict[str, Any],
+    *,
+    tp_from: float,
+    tp_to: float,
+    sl_from: float,
+    sl_to: float,
+    step: float,
+    analysis_tz: str | None = None,
+    settings: Settings | None = None,
+) -> dict[str, Any]:
+    """Replay dollar pairs on one simulation. Does not apply the saved checkbox."""
+    settings = settings or get_settings()
+    take_profits = account_targets.dollar_steps(tp_from, tp_to, step)
+    stops = account_targets.dollar_steps(sl_from, sl_to, step)
+    books = _simulate_vip(vip, analysis_tz=analysis_tz, settings=settings)
+    return {
+        "tp": take_profits,
+        "sl": stops,
+        "step": step,
+        "signal": account_targets.target_grid(books["signal_ok"], take_profits, stops),
+        "bar_close": account_targets.target_grid(books["bar_ok"], take_profits, stops) if books["bar_ok"] else None,
+    }
+
+
+def _simulate_vip(
+    vip: dict[str, Any],
+    *,
+    analysis_tz: str | None,
+    settings: Settings,
+) -> dict[str, Any]:
     lines = list(vip.get("lines") or [])
     validate_lines(lines)
     if not lines:
         raise ValueError("Add at least one symbol before running")
     balance = _account_balance(vip)
-
     ran: list[dict[str, Any]] = []
     signal_ok: list[dict[str, Any]] = []
     bar_ok: list[dict[str, Any]] = []
@@ -84,21 +135,41 @@ def run_vip(
                 "error": " · ".join(part for part in (signal_error, bar_error) if part) or None,
             }
         )
+    positive = {int(line.get("chart_tf_minutes") or 0) for line in lines if int(line.get("chart_tf_minutes") or 0) > 0}
+    return {
+        "ran": ran,
+        "signal_ok": signal_ok,
+        "bar_ok": bar_ok,
+        "balance": balance,
+        "lines": lines,
+        "tz": analysis_tz or settings.tv_trades_tz,
+        "chart_tf_minutes": next(iter(positive)) if len(positive) == 1 else 0,
+    }
 
-    tz = analysis_tz or settings.tv_trades_tz
+
+def _pack_vip(
+    vip: dict[str, Any],
+    books: dict[str, Any],
+    *,
+    account_target: dict[str, Any] | None,
+) -> dict[str, Any]:
     name = str(vip.get("name") or "VIP")
+    balance = books["balance"]
+    tz = books["tz"]
+    signal_ok = books["signal_ok"]
+    bar_ok = books["bar_ok"]
     signal_book = combine_books(signal_ok, name=name, analysis_tz=tz, starting_balance=balance)
     bar_book = combine_books(bar_ok, name=name, analysis_tz=tz, starting_balance=balance) if bar_ok else None
     for result in (*signal_ok, *bar_ok):
         result["trade_equity"] = {}
-    positive = {int(line.get("chart_tf_minutes") or 0) for line in lines if int(line.get("chart_tf_minutes") or 0) > 0}
     return {
         "vip_id": vip["id"],
         "name": vip.get("name") or "",
-        "chart_tf_minutes": next(iter(positive)) if len(positive) == 1 else 0,
-        "lines": ran,
+        "chart_tf_minutes": books["chart_tf_minutes"],
+        "lines": books["ran"],
         "signal": signal_book,
         "bar_close": bar_book,
+        "account_target": account_target,
     }
 
 

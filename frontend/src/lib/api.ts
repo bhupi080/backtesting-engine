@@ -349,14 +349,33 @@ export const api = {
     postJson<TickJob>(`/ticks/jobs/${id}/cancel`),
   vips: () => getJson<VipAccount[]>("/vips"),
   createVip: (name: string) => postJson<VipAccount>("/vips", { name }),
-  updateVip: (id: string, body: { name?: string; lines?: VipLine[]; starting_balance?: number }) =>
-    putJson<VipAccount>(`/vips/${id}`, body),
+  updateVip: (
+    id: string,
+    body: {
+      name?: string
+      lines?: VipLine[]
+      starting_balance?: number
+      account_targets_enabled?: boolean
+      account_tp_usd?: number
+      account_sl_usd?: number
+    },
+  ) => putJson<VipAccount>(`/vips/${id}`, body),
   deleteVip: (id: string) => deleteReq(`/vips/${id}`),
   runVip: (id: string, analysis_tz?: string) => {
     const params = new URLSearchParams()
     if (analysis_tz) params.set("analysis_tz", analysis_tz)
     const query = params.toString()
     return postJson<VipRun>(`/vips/${id}/run${query ? `?${query}` : ""}`)
+  },
+  vipTargetGrid: (
+    id: string,
+    body: { tp_from: number; tp_to: number; sl_from: number; sl_to: number; step: number },
+    analysis_tz?: string,
+  ) => {
+    const params = new URLSearchParams()
+    if (analysis_tz) params.set("analysis_tz", analysis_tz)
+    const query = params.toString()
+    return postJson<VipTargetGrid>(`/vips/${id}/targets${query ? `?${query}` : ""}`, body)
   },
 }
 
@@ -378,7 +397,23 @@ export type VipAccount = {
   id: string
   name: string
   starting_balance: number
+  account_targets_enabled?: boolean
+  account_tp_usd?: number | null
+  account_sl_usd?: number | null
   lines: VipLine[]
+}
+
+export type AccountTargetHit = {
+  hit: "tp" | "sl" | "none"
+  profit: number
+}
+
+export type VipTargetGrid = {
+  tp: number[]
+  sl: number[]
+  step: number
+  signal: AccountTargetHit[][]
+  bar_close: AccountTargetHit[][] | null
 }
 
 export type VipRun = {
@@ -393,4 +428,11 @@ export type VipRun = {
   }[]
   signal: SimulateResponse
   bar_close: SimulateResponse | null
+  account_target?: {
+    enabled: boolean
+    take_profit: number
+    stop: number
+    signal: AccountTargetHit
+    bar_close: AccountTargetHit | null
+  } | null
 }
