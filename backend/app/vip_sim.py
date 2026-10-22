@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from app import risk_reward
+from app import risk_reward, tick_sim
 from app.config import Settings, get_settings
 from app.tick_sim import _SESSION_ASIA, _SESSION_EU, _compute_analytics
 
@@ -17,12 +17,16 @@ def validate_line(line: dict[str, Any]) -> None:
         raise ValueError("Each line needs a symbol and a strategy")
     _bounds(line, "lots", 0.01, 10.0)
     _bounds(line, "commission_per_lot", 0.0, 50.0)
-    _bounds(line, "starting_balance", 100.0, 1_000_000.0)
     _bounds(line, "chart_tf_minutes", 0, 240, as_int=True)
-    _bounds(line, "atr_bar_minutes", 1, 1440, as_int=True)
-    _bounds(line, "atr_period", 2, 500, as_int=True)
-    _bounds(line, "tp_atr_mult", 0.0, 50.0, gt=True)
-    _bounds(line, "sl_atr_mult", 0.0, 50.0, gt=True)
+    mode = str(line.get("exit_mode") or "atr")
+    if mode not in {"atr", "csv"}:
+        raise ValueError("Each symbol uses ATR exits or the CSV exit")
+    line["exit_mode"] = mode
+    if mode == "atr":
+        _bounds(line, "atr_bar_minutes", 1, 1440, as_int=True)
+        _bounds(line, "atr_period", 2, 500, as_int=True)
+        _bounds(line, "tp_atr_mult", 0.0, 50.0, gt=True)
+        _bounds(line, "sl_atr_mult", 0.0, 50.0, gt=True)
 
 
 def validate_lines(lines: list[dict[str, Any]]) -> None:
@@ -40,7 +44,6 @@ def validate_lines(lines: list[dict[str, Any]]) -> None:
 def run_vip(
     vip: dict[str, Any],
     *,
-    chart_tf_minutes: int = 10,
     analysis_tz: str | None = None,
     settings: Settings | None = None,
 ) -> dict[str, Any]:
@@ -49,23 +52,25 @@ def run_vip(
     validate_lines(lines)
     if not lines:
         raise ValueError("Add at least one symbol before running")
-    if not 0 <= int(chart_tf_minutes) <= 240:
-        raise ValueError("Chart timeframe must be between 0 and 240 minutes")
-    chart_tf_minutes = int(chart_tf_minutes)
+    balance = _account_balance(vip)
 
     ran: list[dict[str, Any]] = []
     signal_ok: list[dict[str, Any]] = []
     bar_ok: list[dict[str, Any]] = []
     for line in lines:
-        signal, signal_error = _simulate_line(line, 0, analysis_tz=analysis_tz, settings=settings)
+        signal, signal_error = _simulate_line(
+            line, 0, analysis_tz=analysis_tz, settings=settings, starting_balance=balance
+        )
+        line_tf = int(line.get("chart_tf_minutes") or 0)
         bar_close = None
         bar_error = None
-        if chart_tf_minutes > 0:
+        if line_tf > 0:
             bar_close, bar_error = _simulate_line(
                 line,
-                chart_tf_minutes,
+                line_tf,
                 analysis_tz=analysis_tz,
                 settings=settings,
+                starting_balance=balance,
             )
         if signal is not None:
             signal_ok.append(signal)
@@ -82,18 +87,30 @@ def run_vip(
 
     tz = analysis_tz or settings.tv_trades_tz
     name = str(vip.get("name") or "VIP")
-    signal_book = combine_books(signal_ok, name=name, analysis_tz=tz)
-    bar_book = combine_books(bar_ok, name=name, analysis_tz=tz) if chart_tf_minutes > 0 else None
+    signal_book = combine_books(signal_ok, name=name, analysis_tz=tz, starting_balance=balance)
+    bar_book = combine_books(bar_ok, name=name, analysis_tz=tz, starting_balance=balance) if bar_ok else None
     for result in (*signal_ok, *bar_ok):
         result["trade_equity"] = {}
+    positive = {int(line.get("chart_tf_minutes") or 0) for line in lines if int(line.get("chart_tf_minutes") or 0) > 0}
     return {
         "vip_id": vip["id"],
         "name": vip.get("name") or "",
-        "chart_tf_minutes": chart_tf_minutes,
+        "chart_tf_minutes": next(iter(positive)) if len(positive) == 1 else 0,
         "lines": ran,
         "signal": signal_book,
         "bar_close": bar_book,
     }
+
+
+def _account_balance(vip: dict[str, Any]) -> float:
+    raw = vip.get("starting_balance", 2000.0)
+    try:
+        balance = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Starting balance must be a number") from exc
+    if not 100.0 <= balance <= 1_000_000.0:
+        raise ValueError("Starting balance must be between 100 and 1,000,000")
+    return balance
 
 
 def _simulate_line(
@@ -102,22 +119,29 @@ def _simulate_line(
     *,
     analysis_tz: str | None,
     settings: Settings,
+    starting_balance: float,
 ) -> tuple[dict[str, Any] | None, str | None]:
     try:
-        result = risk_reward.simulate_risk_reward(
-            str(line["symbol"]),
-            str(line["strategy_id"]),
+        common = dict(
             lots=float(line["lots"]),
             commission_per_lot=float(line["commission_per_lot"]),
-            starting_balance=float(line["starting_balance"]),
+            starting_balance=starting_balance,
             chart_tf_minutes=chart_tf_minutes,
             analysis_tz=analysis_tz,
-            atr_bar_minutes=int(line["atr_bar_minutes"]),
-            atr_period=int(line["atr_period"]),
-            tp_atr_mult=float(line["tp_atr_mult"]),
-            sl_atr_mult=float(line["sl_atr_mult"]),
             settings=settings,
         )
+        if str(line.get("exit_mode") or "atr") == "csv":
+            result = tick_sim.simulate(str(line["symbol"]), str(line["strategy_id"]), **common)
+        else:
+            result = risk_reward.simulate_risk_reward(
+                str(line["symbol"]),
+                str(line["strategy_id"]),
+                atr_bar_minutes=int(line["atr_bar_minutes"]),
+                atr_period=int(line["atr_period"]),
+                tp_atr_mult=float(line["tp_atr_mult"]),
+                sl_atr_mult=float(line["sl_atr_mult"]),
+                **common,
+            )
     except Exception as exc:  # noqa: BLE001 — one bad symbol should not drop the rest
         return None, str(exc)
     for trade in result.get("trades") or []:
@@ -131,9 +155,13 @@ def combine_books(
     *,
     name: str,
     analysis_tz: str,
+    starting_balance: float | None = None,
 ) -> dict[str, Any]:
     """Sum each line's closed-trade PnL on one clock. Overlaps both count."""
-    starting = sum(float((r.get("settings") or {}).get("starting_balance") or 0.0) for r in results)
+    if starting_balance is None:
+        starting = sum(float((r.get("settings") or {}).get("starting_balance") or 0.0) for r in results)
+    else:
+        starting = float(starting_balance)
     curves = [_pnl_steps(r) for r in results]
     equity, max_dd_usd, max_dd_pct = _sum_curves(curves, starting)
 

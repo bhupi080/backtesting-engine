@@ -273,13 +273,14 @@ class VipLine(BaseModel):
     sl_atr_mult: float = 1.0
     lots: float = 0.1
     commission_per_lot: float = 7.0
-    starting_balance: float = 2000.0
     chart_tf_minutes: int = 0
+    exit_mode: Literal["atr", "csv"] = "atr"
 
 
 class VipAccount(BaseModel):
     id: str
     name: str
+    starting_balance: float = 2000.0
     lines: list[VipLine] = Field(default_factory=list)
 
 
@@ -289,6 +290,7 @@ class VipCreateRequest(BaseModel):
 
 class VipUpdateRequest(BaseModel):
     name: str | None = None
+    starting_balance: float | None = Field(default=None, ge=100, le=1_000_000)
     lines: list[VipLine] | None = None
 
 

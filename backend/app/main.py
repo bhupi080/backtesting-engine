@@ -269,7 +269,12 @@ def update_vip(vip_id: str, body: VipUpdateRequest) -> VipAccount:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     if body.name is not None and not body.name.strip():
         raise HTTPException(status_code=400, detail="Name is required")
-    saved = vip_store.update_vip(vip_id, name=body.name, lines=lines)
+    saved = vip_store.update_vip(
+        vip_id,
+        name=body.name,
+        starting_balance=body.starting_balance,
+        lines=lines,
+    )
     if saved is None:
         raise HTTPException(status_code=404, detail="VIP not found")
     return VipAccount(**saved)
@@ -284,14 +289,13 @@ def delete_vip(vip_id: str) -> None:
 @app.post("/vips/{vip_id}/run", response_model=VipRunResponse)
 def run_vip(
     vip_id: str,
-    chart_tf_minutes: int = Query(10, ge=0, le=240),
     analysis_tz: str | None = Query(None),
 ) -> VipRunResponse:
     vip = vip_store.get_vip(vip_id)
     if vip is None:
         raise HTTPException(status_code=404, detail="VIP not found")
     try:
-        raw = vip_sim.run_vip(vip, chart_tf_minutes=chart_tf_minutes, analysis_tz=analysis_tz)
+        raw = vip_sim.run_vip(vip, analysis_tz=analysis_tz)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return VipRunResponse(**raw)

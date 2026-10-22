@@ -349,13 +349,14 @@ export const api = {
     postJson<TickJob>(`/ticks/jobs/${id}/cancel`),
   vips: () => getJson<VipAccount[]>("/vips"),
   createVip: (name: string) => postJson<VipAccount>("/vips", { name }),
-  updateVip: (id: string, body: { name?: string; lines?: VipLine[] }) =>
+  updateVip: (id: string, body: { name?: string; lines?: VipLine[]; starting_balance?: number }) =>
     putJson<VipAccount>(`/vips/${id}`, body),
   deleteVip: (id: string) => deleteReq(`/vips/${id}`),
-  runVip: (id: string, chart_tf_minutes: number, analysis_tz?: string) => {
-    const params = new URLSearchParams({ chart_tf_minutes: String(chart_tf_minutes) })
+  runVip: (id: string, analysis_tz?: string) => {
+    const params = new URLSearchParams()
     if (analysis_tz) params.set("analysis_tz", analysis_tz)
-    return postJson<VipRun>(`/vips/${id}/run?${params.toString()}`)
+    const query = params.toString()
+    return postJson<VipRun>(`/vips/${id}/run${query ? `?${query}` : ""}`)
   },
 }
 
@@ -369,13 +370,14 @@ export type VipLine = {
   sl_atr_mult: number
   lots: number
   commission_per_lot: number
-  starting_balance: number
   chart_tf_minutes: number
+  exit_mode: "atr" | "csv"
 }
 
 export type VipAccount = {
   id: string
   name: string
+  starting_balance: number
   lines: VipLine[]
 }
 

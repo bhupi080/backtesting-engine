@@ -50,7 +50,7 @@ def get_vip(vip_id: str) -> dict[str, Any] | None:
 
 
 def create_vip(name: str) -> dict[str, Any]:
-    vip = {"id": str(uuid.uuid4()), "name": name.strip(), "lines": []}
+    vip = {"id": str(uuid.uuid4()), "name": name.strip(), "starting_balance": 2000.0, "lines": []}
     with _LOCK:
         vips = _read()
         vips.append(vip)
@@ -62,6 +62,7 @@ def update_vip(
     vip_id: str,
     *,
     name: str | None = None,
+    starting_balance: float | None = None,
     lines: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any] | None:
     with _LOCK:
@@ -71,6 +72,8 @@ def update_vip(
                 continue
             if name is not None:
                 vip["name"] = name.strip()
+            if starting_balance is not None:
+                vip["starting_balance"] = starting_balance
             if lines is not None:
                 vip["lines"] = lines
             _write(vips)

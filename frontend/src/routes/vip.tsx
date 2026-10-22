@@ -2,7 +2,6 @@ import { createFileRoute } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useState } from "react"
 import {
-  ChevronDown,
   Crown,
   PanelLeftClose,
   PanelLeftOpen,
@@ -11,13 +10,14 @@ import {
   Plus,
   Search,
   Trash2,
-  ZoomIn,
 } from "lucide-react"
 
-import { EquityCurveZoomModal, PreciseEquityCurveChart } from "@/components/charts"
+import { CartesianGrid, Legend, Line, LineChart, XAxis, YAxis } from "recharts"
+
+import { PreciseEquityCurveChart } from "@/components/charts"
+import { ChartContainer, ChartTooltip, type ChartConfig } from "@/components/ui/chart"
 import { LoadingState } from "@/components/loading-state"
 import { SimOverviewPanel } from "@/components/sim-overview-panel"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -35,19 +35,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
-import { api, type SimulateResponse, type StrategyInfo, type VipLine } from "@/lib/api"
+import { api, type StrategyInfo, type VipAccount, type VipLine, type VipRun } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
-  DeferredTradeEquityChart,
   SimAnalyticsPanel,
+  SimTradesTable,
 } from "@/routes/simulate"
 
 export const Route = createFileRoute("/vip")({
@@ -73,13 +65,18 @@ const ATR_BARS = [
   { value: "240", label: "4 hour" },
 ]
 
-const EXIT_LABEL: Record<string, string> = {
-  tp: "Take profit",
-  sl: "Stop",
-  signal: "CSV exit",
-}
+const LINE_COLORS = [
+  "#34d399",
+  "#60a5fa",
+  "#f59e0b",
+  "#f472b6",
+  "#a78bfa",
+  "#22d3ee",
+  "#fb7185",
+  "#facc15",
+]
 
-type TabId = "overview" | "analytics" | "trades" | "grid"
+type TabId = "overview" | "analytics" | "trades"
 
 function blankLine(): VipLine {
   return {
@@ -92,9 +89,25 @@ function blankLine(): VipLine {
     sl_atr_mult: 1,
     lots: 0.1,
     commission_per_lot: 7,
-    starting_balance: 2000,
-    chart_tf_minutes: 0,
+    chart_tf_minutes: 10,
+    exit_mode: "atr",
   }
+}
+
+function exitSummary(line: VipLine): string {
+  const exit = line.exit_mode === "csv"
+    ? "CSV exit"
+    : `TP ×${formatMult(line.tp_atr_mult)} · SL ×${formatMult(line.sl_atr_mult)} · ${atrLabel(line.atr_bar_minutes)}`
+  return `${exit} · ${barCloseSummary(line)}`
+}
+
+function barCloseSummary(line: Pick<VipLine, "chart_tf_minutes">): string {
+  return line.chart_tf_minutes > 0 ? `Bar close ${line.chart_tf_minutes}m` : "At signal"
+}
+
+function barCloseCardLabel(lines: VipLine[]): string {
+  const minutes = [...new Set(lines.map((line) => line.chart_tf_minutes).filter((minutes) => minutes > 0))]
+  return minutes.length === 1 ? `${minutes[0]}m` : "per symbol"
 }
 
 function formatPnl(n: number | null | undefined): string {
@@ -124,13 +137,13 @@ function VipPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [name, setName] = useState("")
   const [timeZone, setTimeZone] = useState("Europe/Bucharest")
-  const [chartTf, setChartTf] = useState(10)
+  const [balance, setBalance] = useState(2000)
   const [fillGroup, setFillGroup] = useState<"signal" | "barClose">("signal")
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [tab, setTab] = useState<TabId>("overview")
+  const [tradeLineId, setTradeLineId] = useState<string | null>(null)
   const [editor, setEditor] = useState<VipLine | null>(null)
-  const [newName, setNewName] = useState("")
-  const [renaming, setRenaming] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
   const [ranLines, setRanLines] = useState("")
 
   const vip = useMemo(() => {
@@ -140,10 +153,15 @@ function VipPage() {
 
   useEffect(() => {
     setName(vip?.name ?? "")
-  }, [vip?.id, vip?.name])
+    setBalance(vip?.starting_balance ?? 2000)
+  }, [vip?.id, vip?.name, vip?.starting_balance])
+
+  useEffect(() => {
+    setTradeLineId(null)
+  }, [vip?.id])
 
   const save = useMutation({
-    mutationFn: (body: { id: string; name?: string; lines?: VipLine[] }) =>
+    mutationFn: (body: { id: string; name?: string; lines?: VipLine[]; starting_balance?: number }) =>
       api.updateVip(body.id, { name: body.name, lines: body.lines }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["vips"] })
@@ -153,8 +171,8 @@ function VipPage() {
   const create = useMutation({
     mutationFn: (label: string) => api.createVip(label),
     onSuccess: async (created) => {
-      setNewName("")
       setSelectedId(created.id)
+      setAccountOpen(false)
       await queryClient.invalidateQueries({ queryKey: ["vips"] })
     },
   })
@@ -170,18 +188,24 @@ function VipPage() {
   const run = useMutation({
     mutationFn: async () => {
       if (!vip) throw new Error("Create a VIP first")
-      await api.updateVip(vip.id, { name: name.trim() || vip.name, lines: vip.lines })
-      return api.runVip(vip.id, chartTf, timeZone)
+      await api.updateVip(vip.id, {
+        name: name.trim() || vip.name,
+        lines: vip.lines,
+        starting_balance: balance,
+      })
+      return api.runVip(vip.id, timeZone)
     },
     onSuccess: () => {
-      setRanLines(JSON.stringify({ lines: vip?.lines ?? [], chartTf }))
-      setFillGroup(chartTf > 0 ? "barClose" : "signal")
+      setRanLines(JSON.stringify({ lines: vip?.lines ?? [], balance }))
+      setFillGroup((vip?.lines ?? []).some((line) => line.chart_tf_minutes > 0) ? "barClose" : "signal")
     },
   })
 
-  const stale = Boolean(run.data) && ranLines !== JSON.stringify({ lines: vip?.lines ?? [], chartTf })
-  const showBarClose = Boolean(run.data?.bar_close) && fillGroup === "barClose"
-  const combined = showBarClose ? run.data?.bar_close : run.data?.signal
+  const accountIds = new Set((vipsQ.data ?? []).map((row) => row.id))
+  const visibleRun = run.data && accountIds.has(run.data.vip_id) ? run.data : null
+  const stale = Boolean(visibleRun) && ranLines !== JSON.stringify({ lines: vip?.lines ?? [], balance })
+  const showBarClose = Boolean(visibleRun?.bar_close) && fillGroup === "barClose"
+  const combined = showBarClose ? visibleRun?.bar_close : visibleRun?.signal
   const summary = combined?.summary
   const startingBalance = combined?.settings?.starting_balance ?? 0
   const chartEquity = useMemo(
@@ -219,89 +243,30 @@ function VipPage() {
               </button>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-              <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                  Create VIP
-                </span>
-                <div className="flex gap-1.5">
-                  <Input
-                    value={newName}
-                    onChange={(event) => setNewName(event.target.value)}
-                    placeholder="Account name"
-                    className="h-8 text-[12px]"
-                  />
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={!newName.trim() || create.isPending}
-                    onClick={() => create.mutate(newName.trim())}
-                  >
-                    <Plus className="size-3.5" />
-                  </Button>
-                </div>
-              </div>
-              {(vipsQ.data ?? []).length === 0 ? (
-                <p className="text-[12px] text-muted-foreground">No VIP accounts yet.</p>
-              ) : (
-                <div className="flex flex-col gap-1">
-                  <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-                    Open account
+              <div>
+                <p className="mb-1.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+                  Account
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setAccountOpen(true)}
+                  className="flex w-full items-center justify-between gap-2 rounded-md border bg-background px-2.5 py-2 text-left transition-colors hover:bg-muted/50"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-xs font-semibold">
+                      {vip?.name ?? "No account open"}
+                    </span>
+                    <span className="block truncate text-[11px] text-muted-foreground">
+                      {vipsQ.isLoading
+                        ? "Loading accounts…"
+                        : vip
+                          ? `${vip.lines.length} ${vip.lines.length === 1 ? "symbol" : "symbols"}`
+                          : "Create or open an account"}
+                    </span>
                   </span>
-                  <ul className="space-y-1">
-                    {(vipsQ.data ?? []).map((row) => {
-                      const selected = row.id === vip?.id
-                      return (
-                        <li key={row.id}>
-                          {selected && renaming ? (
-                            <Input
-                              autoFocus
-                              value={name}
-                              onChange={(event) => setName(event.target.value)}
-                              onBlur={() => {
-                                const next = name.trim()
-                                if (next && next !== row.name) save.mutate({ id: row.id, name: next })
-                                setRenaming(false)
-                              }}
-                              onKeyDown={(event) => {
-                                if (event.key === "Enter") event.currentTarget.blur()
-                              }}
-                              className="h-8 text-[12px]"
-                            />
-                          ) : (
-                            <div
-                              className={cn(
-                                "flex items-center gap-2 rounded-md border px-2.5 py-1.5",
-                                selected ? "border-amber-500/50 bg-amber-500/10" : "bg-background",
-                              )}
-                            >
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setRenaming(false)
-                                  setSelectedId(row.id)
-                                }}
-                                className="min-w-0 flex-1 truncate text-left text-[12px] font-medium"
-                              >
-                                {row.name}
-                              </button>
-                              {selected ? (
-                                <button
-                                  type="button"
-                                  title="Rename"
-                                  className="text-muted-foreground"
-                                  onClick={() => setRenaming(true)}
-                                >
-                                  <Pencil className="size-3.5" />
-                                </button>
-                              ) : null}
-                            </div>
-                          )}
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </div>
-              )}
+                  <Crown className="size-3.5 shrink-0 text-amber-500" />
+                </button>
+              </div>
 
               {vip ? (
                 <>
@@ -325,11 +290,15 @@ function VipPage() {
                     </Select>
                   </label>
                   <NumberField
-                    label="Chart TF (min)"
-                    value={chartTf}
-                    step={1}
-                    min={0}
-                    onChange={setChartTf}
+                    label="Starting balance"
+                    value={balance}
+                    step={100}
+                    min={100}
+                    onChange={setBalance}
+                    onBlur={() => {
+                      if (!vip || balance === vip.starting_balance) return
+                      save.mutate({ id: vip.id, starting_balance: balance })
+                    }}
                   />
                   <div className="flex items-center justify-between">
                     <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
@@ -351,10 +320,7 @@ function VipPage() {
                                 {line.strategy_id}
                               </span>
                             </p>
-                            <p className="mt-0.5 text-[10px] text-muted-foreground">
-                              TP ×{formatMult(line.tp_atr_mult)} · SL ×{formatMult(line.sl_atr_mult)} ·{" "}
-                              {atrLabel(line.atr_bar_minutes)}
-                            </p>
+                            <p className="mt-0.5 text-[10px] text-muted-foreground">{exitSummary(line)}</p>
                           </div>
                           <div className="flex shrink-0 gap-0.5">
                             <button type="button" className="text-muted-foreground" onClick={() => setEditor(line)}>
@@ -372,20 +338,12 @@ function VipPage() {
                       </li>
                     ))}
                   </ul>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="text-destructive"
-                    disabled={remove.isPending}
-                    onClick={() => {
-                      if (window.confirm(`Delete ${vip.name}?`)) remove.mutate(vip.id)
-                    }}
-                  >
-                    Delete this VIP
-                  </Button>
                 </>
-              ) : null}
+              ) : (
+                <p className="text-[12px] text-muted-foreground">
+                  Open an account to add symbols and run them together.
+                </p>
+              )}
             </div>
             <div className="shrink-0 border-t border-border p-3">
               <Button
@@ -419,27 +377,38 @@ function VipPage() {
           {run.isPending ? (
             <LoadingState
               title="Running VIP"
-              message={
-                chartTf > 0
-                  ? `Filling each symbol at the signal and after the ${chartTf}m bar, then adding the results.`
-                  : "Filling each symbol at the signal, then adding the results."
-              }
+              message="Filling each symbol at the signal, and at that symbol's bar close when it has one."
             />
-          ) : !run.data || !summary || !combined ? (
+          ) : !vip ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
               <Crown className="size-8 text-amber-500/60" />
-              <p className="text-sm font-medium">Add symbols to this VIP</p>
+              <p className="text-sm font-medium">Open a VIP account</p>
               <p className="max-w-md text-sm text-muted-foreground">
-                Each symbol keeps its own strategy, ATR take profit and stop, and lot size. Run compares a fill at the signal with a fill at bar close.
+                An account holds the symbols you want to trade together.
+              </p>
+              <Button type="button" onClick={() => setAccountOpen(true)}>
+                Open account
+              </Button>
+            </div>
+          ) : !visibleRun || !summary || !combined ? (
+            <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-center">
+              <Crown className="size-8 text-amber-500/60" />
+              <p className="text-sm font-medium">
+                {vip.lines.length === 0 ? `Add symbols to ${vip.name}` : `Run ${vip.name}`}
+              </p>
+              <p className="max-w-md text-sm text-muted-foreground">
+                {vip.lines.length === 0
+                  ? "Each symbol keeps its own strategy, exit, and lot size."
+                  : "Run compares a fill at the signal with a fill at bar close."}
               </p>
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="flex flex-col gap-2 border-b border-border px-3 py-2 lg:flex-row lg:items-center">
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm font-semibold">{run.data.name}</p>
+                  <p className="text-sm font-semibold">{visibleRun.name}</p>
                   <p className="text-[11px] text-muted-foreground">
-                    {run.data.lines.length} {run.data.lines.length === 1 ? "symbol" : "symbols"}
+                    {visibleRun.lines.length} {visibleRun.lines.length === 1 ? "symbol" : "symbols"}
                     {stale ? " · settings changed, run again" : ""}
                   </p>
                 </div>
@@ -448,15 +417,16 @@ function VipPage() {
                     active={!showBarClose}
                     title="At signal"
                     tfLabel="0m"
-                    pnl={run.data.signal.summary?.sim_pnl_usd}
+                    pnl={visibleRun.signal.summary?.sim_pnl_usd}
+                    recommended
                     onClick={() => setFillGroup("signal")}
                   />
-                  {run.data.bar_close ? (
+                  {visibleRun.bar_close ? (
                     <FillGroupCard
                       active={showBarClose}
                       title="Bar close"
-                      tfLabel={`${run.data.chart_tf_minutes}m`}
-                      pnl={run.data.bar_close.summary?.sim_pnl_usd}
+                      tfLabel={barCloseCardLabel(visibleRun.lines.map((row) => row.line))}
+                      pnl={visibleRun.bar_close.summary?.sim_pnl_usd}
                       onClick={() => setFillGroup("barClose")}
                     />
                   ) : null}
@@ -468,7 +438,6 @@ function VipPage() {
                     ["overview", "Overview"],
                     ["analytics", "Analytics"],
                     ["trades", "Trades"],
-                    ["grid", "Equity by trade"],
                   ] as const
                 ).map(([id, label]) => (
                   <button
@@ -496,15 +465,20 @@ function VipPage() {
                       trades={combined.trades}
                       timeZone={timeZone}
                     />
+                    <SymbolOverlay
+                      lines={visibleRun.lines}
+                      showBarClose={showBarClose}
+                      timeZone={timeZone}
+                    />
                     <div className="px-3 pt-3">
                       <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
                         By symbol
                       </p>
                     </div>
                     <div className="grid grid-cols-1 gap-3 p-3 xl:grid-cols-2">
-                      {run.data.lines.map((row) => {
+                      {visibleRun.lines.map((row) => {
                         const result = showBarClose ? row.bar_close : row.signal
-                        const balance = result?.settings?.starting_balance ?? row.line.starting_balance
+                        const balance = result?.settings?.starting_balance ?? 0
                         const equity = (result?.equity ?? []).map((point) => ({
                           t: point.t,
                           equity: point.equity - balance,
@@ -515,7 +489,10 @@ function VipPage() {
                         const trades = result?.trades ?? []
                         const filled = trades.filter((trade) => trade.status === "ok").length
                         const missingTicks = trades.some((trade) => trade.status === "no_ticks")
-                        const emptyReason = row.error
+                        const signalOnly = showBarClose && row.line.chart_tf_minutes <= 0
+                        const emptyReason = signalOnly
+                          ? `${row.line.symbol} is filled at the signal only.`
+                          : row.error
                           ? row.error
                           : filled > 0
                             ? null
@@ -535,13 +512,17 @@ function VipPage() {
                                   </span>
                                 </p>
                                 <p className="text-[11px] text-muted-foreground">
-                                  ATR {row.line.atr_period} on {atrLabel(row.line.atr_bar_minutes)} · Take profit ×
-                                  {formatMult(row.line.tp_atr_mult)} · Stop ×{formatMult(row.line.sl_atr_mult)} ·{" "}
+                                  {row.line.exit_mode === "csv"
+                                    ? "CSV exit"
+                                    : `ATR ${row.line.atr_period} on ${atrLabel(row.line.atr_bar_minutes)} · Take profit ×${formatMult(row.line.tp_atr_mult)} · Stop ×${formatMult(row.line.sl_atr_mult)}`}
+                                  {" · "}
                                   {row.line.lots} lots
+                                  {" · "}
+                                  {barCloseSummary(row.line)}
                                 </p>
                               </div>
                               <p className={cn("font-mono text-sm font-semibold tabular-nums", pnlClass(filled > 0 ? pnl : null))}>
-                                {filled > 0 ? formatPnl(pnl) : "Not filled"}
+                                {filled > 0 ? formatPnl(pnl) : signalOnly ? "At signal" : "Not filled"}
                               </p>
                             </div>
                             {emptyReason ? (
@@ -569,16 +550,41 @@ function VipPage() {
                     equity={chartEquity}
                     timeZone={timeZone}
                   />
-                ) : tab === "grid" ? (
-                  <EquityGrid rows={combined.trades} tradeEquity={combined.trade_equity ?? {}} timeZone={timeZone} />
                 ) : (
-                  <TradesTable rows={combined.trades} tradeEquity={combined.trade_equity ?? {}} timeZone={timeZone} />
+                  <VipTradesPanel
+                    lines={visibleRun.lines.map((row) => row.line)}
+                    trades={combined.trades}
+                    tradeEquity={combined.trade_equity ?? {}}
+                    timeZone={timeZone}
+                    lineId={tradeLineId}
+                    onLineId={setTradeLineId}
+                  />
                 )}
               </div>
             </div>
           )}
         </section>
       </div>
+      <AccountDialog
+        open={accountOpen}
+        onOpenChange={setAccountOpen}
+        accounts={vipsQ.data ?? []}
+        loading={vipsQ.isLoading}
+        error={vipsQ.error}
+        selectedId={vip?.id ?? null}
+        creating={create.isPending}
+        deleting={remove.isPending}
+        onSelect={(id) => {
+          setSelectedId(id)
+          setAccountOpen(false)
+        }}
+        onCreate={(label) => create.mutate(label)}
+        createError={create.error?.message}
+        onRename={(id, next) => save.mutate({ id, name: next })}
+        onDelete={(id, label) => {
+          if (window.confirm(`Delete ${label}?`)) remove.mutate(id)
+        }}
+      />
       {editor && vip ? (
         <LineDialog
           line={editor}
@@ -594,17 +600,146 @@ function VipPage() {
   )
 }
 
+function SymbolOverlay({
+  lines,
+  showBarClose,
+  timeZone,
+}: {
+  lines: VipRun["lines"]
+  showBarClose: boolean
+  timeZone: string
+}) {
+  const series = useMemo(() => {
+    return lines.flatMap((row, index) => {
+      const result = showBarClose ? row.bar_close : row.signal
+      const balance = result?.settings?.starting_balance ?? 0
+      const points = (result?.equity ?? [])
+        .map((point) => ({ t: Date.parse(point.t), pnl: point.equity - balance }))
+        .filter((point) => !Number.isNaN(point.t))
+        .sort((a, b) => a.t - b.t)
+      if (points.length === 0) return []
+      return [
+        {
+          key: row.line.id,
+          label: `${row.line.symbol} ${row.line.strategy_id}`,
+          color: LINE_COLORS[index % LINE_COLORS.length],
+          points,
+        },
+      ]
+    })
+  }, [lines, showBarClose])
+
+  const data = useMemo(() => {
+    const times = [...new Set(series.flatMap((item) => item.points.map((point) => point.t)))].sort(
+      (a, b) => a - b,
+    )
+    const cursor = series.map(() => 0)
+    const last = series.map(() => 0)
+    return times.map((t) => {
+      const row: Record<string, number> = { t }
+      series.forEach((item, index) => {
+        while (cursor[index] < item.points.length && item.points[cursor[index]].t <= t) {
+          last[index] = item.points[cursor[index]].pnl
+          cursor[index] += 1
+        }
+        row[item.key] = last[index]
+      })
+      return row
+    })
+  }, [series])
+
+  const config = useMemo(() => {
+    const next: ChartConfig = {}
+    for (const item of series) next[item.key] = { label: item.label, color: item.color }
+    return next
+  }, [series])
+
+  if (series.length === 0) return null
+
+  return (
+    <div className="border-t border-border px-3 py-3">
+      <p className="text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+        Symbols together
+      </p>
+      <p className="mt-0.5 mb-2 text-[11px] text-muted-foreground">
+        One curve per symbol. The total above is all of them added.
+      </p>
+      <ChartContainer config={config} className="aspect-auto h-[280px] w-full">
+        <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+          <CartesianGrid vertical={false} strokeDasharray="3 3" />
+          <XAxis
+            dataKey="t"
+            tickLine={false}
+            axisLine={false}
+            minTickGap={48}
+            tickFormatter={(value) =>
+              new Date(Number(value)).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                timeZone,
+              })
+            }
+          />
+          <YAxis
+            tickLine={false}
+            axisLine={false}
+            width={56}
+            tickFormatter={(value) => formatPnl(Number(value))}
+          />
+          <ChartTooltip
+            content={({ active, payload, label }) => {
+              if (!active || !payload?.length) return null
+              const when = new Date(Number(label)).toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+                timeZone,
+              })
+              return (
+                <div className="rounded-md border bg-popover px-2.5 py-2 text-xs shadow-md">
+                  <p className="mb-1 text-muted-foreground">{when}</p>
+                  {payload.map((item) => (
+                    <p key={String(item.dataKey)} className="font-mono tabular-nums" style={{ color: item.color }}>
+                      {item.name} {formatPnl(Number(item.value))}
+                    </p>
+                  ))}
+                </div>
+              )
+            }}
+          />
+          <Legend />
+          {series.map((item) => (
+            <Line
+              key={item.key}
+              type="stepAfter"
+              dataKey={item.key}
+              name={item.label}
+              stroke={item.color}
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+            />
+          ))}
+        </LineChart>
+      </ChartContainer>
+    </div>
+  )
+}
+
 function FillGroupCard({
   active,
   title,
   tfLabel,
   pnl,
+  recommended = false,
   onClick,
 }: {
   active: boolean
   title: string
   tfLabel: string
   pnl: number | null | undefined
+  recommended?: boolean
   onClick: () => void
 }) {
   return (
@@ -613,27 +748,227 @@ function FillGroupCard({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "rounded-md border px-2 py-1.5 text-left transition-all",
+        "h-full rounded-md border px-2 py-1.5 text-left transition-all",
         active
           ? "border-amber-500/50 bg-amber-500/10 ring-1 ring-amber-500/20"
           : "border-border/80 bg-card/40 hover:bg-muted/40",
       )}
     >
-      <div className="flex items-center justify-between gap-1.5">
-        <span className="truncate text-[10px] font-medium text-muted-foreground">
+      <div className="flex items-center justify-between gap-1">
+        <span className="min-w-0 truncate text-[10px] font-medium text-muted-foreground">
           {title}
           <span className="ml-1 font-mono tabular-nums">· {tfLabel}</span>
         </span>
-        {active ? (
-          <span className="shrink-0 rounded bg-amber-600/90 px-1 py-px text-[8px] font-semibold tracking-wide text-white uppercase">
-            On
-          </span>
-        ) : null}
+        <span className="flex shrink-0 items-center gap-1">
+          {recommended ? (
+            <span className="rounded bg-emerald-600/90 px-1 py-px text-[8px] font-semibold tracking-wide text-white uppercase">
+              Recommended
+            </span>
+          ) : null}
+          {active ? (
+            <span className="rounded bg-amber-600/90 px-1 py-px text-[8px] font-semibold tracking-wide text-white uppercase">
+              On
+            </span>
+          ) : null}
+        </span>
       </div>
       <p className={cn("mt-0.5 font-mono text-sm font-semibold tabular-nums", pnlClass(pnl))}>
         {formatPnl(pnl)}
       </p>
     </button>
+  )
+}
+
+function AccountDialog({
+  open,
+  onOpenChange,
+  accounts,
+  loading,
+  error,
+  selectedId,
+  creating,
+  deleting,
+  createError,
+  onSelect,
+  onCreate,
+  onRename,
+  onDelete,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  accounts: VipAccount[]
+  loading: boolean
+  error: Error | null
+  selectedId: string | null
+  creating: boolean
+  deleting: boolean
+  createError?: string
+  onSelect: (id: string) => void
+  onCreate: (name: string) => void
+  onRename: (id: string, name: string) => void
+  onDelete: (id: string, name: string) => void
+}) {
+  const [newName, setNewName] = useState("")
+  const [renamingId, setRenamingId] = useState<string | null>(null)
+  const [renameValue, setRenameValue] = useState("")
+
+  useEffect(() => {
+    if (!open) {
+      setNewName("")
+      setRenamingId(null)
+    }
+  }, [open])
+
+  function commitRename(account: VipAccount) {
+    const next = renameValue.trim()
+    if (next && next !== account.name) onRename(account.id, next)
+    setRenamingId(null)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[80vh] max-w-md gap-0 overflow-hidden p-0">
+        <DialogHeader className="px-5 pt-5 pr-12 pb-2">
+          <DialogTitle>VIP accounts</DialogTitle>
+          <DialogDescription>Create an account, or open one you already saved.</DialogDescription>
+        </DialogHeader>
+        <div className="px-5 pt-3 pb-4">
+          <p className="mb-1.5 text-[10px] font-semibold tracking-wide text-muted-foreground uppercase">
+            New account
+          </p>
+          <div className="flex gap-2">
+            <Input
+              value={newName}
+              onChange={(event) => setNewName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && newName.trim()) onCreate(newName.trim())
+              }}
+              placeholder="Account name"
+              className="h-9"
+            />
+            <Button
+              type="button"
+              disabled={!newName.trim() || creating}
+              onClick={() => onCreate(newName.trim())}
+            >
+              {creating ? "Creating…" : "Create"}
+            </Button>
+          </div>
+          {createError ? <p className="mt-2 text-[11px] text-rose-500">{createError}</p> : null}
+        </div>
+        <div className="max-h-[min(24rem,50vh)] overflow-y-auto border-t px-3 py-2">
+          {loading ? (
+            <p className="px-2 py-3 text-[12px] text-muted-foreground">Loading accounts…</p>
+          ) : error ? (
+            <p className="px-2 py-3 text-[12px] text-rose-500">{error.message}</p>
+          ) : accounts.length === 0 ? (
+            <p className="px-2 py-3 text-[12px] text-muted-foreground">No accounts yet.</p>
+          ) : (
+            <ul className="space-y-0.5">
+              {accounts.map((account) => {
+                const selected = account.id === selectedId
+                return (
+                  <li key={account.id} className="flex items-center gap-1">
+                    {renamingId === account.id ? (
+                      <Input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(event) => setRenameValue(event.target.value)}
+                        onBlur={() => commitRename(account)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur()
+                          if (event.key === "Escape") setRenamingId(null)
+                        }}
+                        className="h-9 text-[13px]"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => onSelect(account.id)}
+                        className={cn(
+                          "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left transition-colors",
+                          selected ? "bg-amber-500/10 text-foreground" : "hover:bg-muted/50",
+                        )}
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] font-medium">{account.name}</span>
+                          <span className="block text-[11px] text-muted-foreground">
+                            {account.lines.length} {account.lines.length === 1 ? "symbol" : "symbols"}
+                          </span>
+                        </span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      title="Rename"
+                      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() => {
+                        setRenamingId(account.id)
+                        setRenameValue(account.name)
+                      }}
+                    >
+                      <Pencil className="size-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      title="Delete account"
+                      disabled={deleting}
+                      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                      onClick={() => onDelete(account.id, account.name)}
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+const MATCH_LIMIT = 50
+
+function StrategyMatches({
+  matches,
+  draft,
+  onPick,
+}: {
+  matches: StrategyInfo[]
+  draft: VipLine
+  onPick: (symbol: string, strategyId: string) => void
+}) {
+  if (matches.length === 0) {
+    return <p className="px-3 py-3 text-[12px] text-muted-foreground">No matches.</p>
+  }
+  const shown = matches.slice(0, MATCH_LIMIT)
+  return (
+    <>
+      {shown.map((row) => {
+        const selected = draft.symbol === row.symbol && draft.strategy_id === row.strategy_id
+        return (
+          <button
+            key={`${row.symbol}-${row.strategy_id}`}
+            type="button"
+            className={cn(
+              "flex w-full items-center gap-2 px-2 py-1.5 text-left text-[12px]",
+              selected ? "bg-amber-500/10 font-medium" : "hover:bg-muted/50",
+            )}
+            onClick={() => onPick(row.symbol, row.strategy_id)}
+          >
+            <span className="font-mono font-semibold">{row.symbol}</span>
+            <span className="text-muted-foreground">{row.strategy_id}</span>
+          </button>
+        )
+      })}
+      {matches.length > shown.length ? (
+        <p className="px-2 py-2 text-[11px] text-muted-foreground">
+          {shown.length} of {matches.length.toLocaleString()}. Keep typing to narrow this list.
+        </p>
+      ) : null}
+    </>
   )
 }
 
@@ -646,25 +981,26 @@ function LineDialog({
   onClose: () => void
   onSave: (line: VipLine) => void
 }) {
-  const [draft, setDraft] = useState(line)
-  const [pickerOpen, setPickerOpen] = useState(!line.symbol)
+  const [draft, setDraft] = useState<VipLine>({ ...line, exit_mode: line.exit_mode ?? "atr" })
   const strategiesQ = useQuery({ queryKey: ["strategies"], queryFn: api.strategies })
   const [query, setQuery] = useState("")
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [replacing, setReplacing] = useState(false)
+  const chosen = Boolean(draft.symbol && draft.strategy_id)
 
-  const groups = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    const rows = (strategiesQ.data ?? []).filter(
-      (row) => !q || row.symbol.toLowerCase().includes(q) || row.strategy_id.toLowerCase().includes(q),
+  const needle = query.trim().toLowerCase()
+  const matches = useMemo(() => {
+    if (!needle) return []
+    return (strategiesQ.data ?? []).filter(
+      (row) =>
+        row.symbol.toLowerCase().includes(needle) || row.strategy_id.toLowerCase().includes(needle),
     )
-    const map = new Map<string, StrategyInfo[]>()
-    for (const row of rows) {
-      map.set(row.symbol, [...(map.get(row.symbol) ?? []), row])
-    }
-    return [...map.entries()]
-      .map(([symbol, strategies]) => ({ symbol, strategies }))
-      .sort((a, b) => a.symbol.localeCompare(b.symbol))
-  }, [query, strategiesQ.data])
+  }, [needle, strategiesQ.data])
+
+  function pick(symbol: string, strategyId: string) {
+    setDraft((prev) => ({ ...prev, symbol, strategy_id: strategyId }))
+    setQuery("")
+    setReplacing(false)
+  }
 
   function setNumber<K extends keyof VipLine>(key: K, value: number) {
     setDraft((prev) => ({ ...prev, [key]: value }))
@@ -676,7 +1012,7 @@ function LineDialog({
         <DialogHeader>
           <DialogTitle>{line.symbol ? "Edit symbol" : "Add symbol"}</DialogTitle>
           <DialogDescription>
-            Strategy, ATR take profit and stop, and position size. Fill time is chosen for the whole VIP.
+            Choose the strategy, the exit, and the size for this symbol.
           </DialogDescription>
         </DialogHeader>
         <div className="mt-4 space-y-5">
@@ -684,75 +1020,92 @@ function LineDialog({
             <p className="mb-1.5 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
               Symbol and strategy
             </p>
-            <button
-              type="button"
-              onClick={() => setPickerOpen((open) => !open)}
-              className="flex w-full items-center justify-between rounded-md border px-3 py-2.5 text-left hover:bg-muted/40"
-            >
-              <span className="min-w-0">
-                <span className="block font-mono text-sm font-semibold">
-                  {draft.symbol || "Choose a symbol"}
-                </span>
-                <span className="block text-[11px] text-muted-foreground">
-                  {draft.strategy_id ? `Strategy ${draft.strategy_id}` : "Then choose its strategy"}
-                </span>
-              </span>
-              <ChevronDown className={cn("size-3.5 shrink-0 text-muted-foreground", !pickerOpen && "-rotate-90")} />
-            </button>
-            {pickerOpen ? (
-              <div className="mt-2 rounded-md border">
-                <div className="relative border-b">
-                  <Search className="pointer-events-none absolute top-2.5 left-2.5 size-3.5 text-muted-foreground" />
-                  <Input
-                    value={query}
-                    onChange={(event) => setQuery(event.target.value)}
-                    className="h-9 border-0 pl-8 text-[12px] shadow-none"
-                    placeholder="Search symbol or strategy"
-                  />
-                </div>
-                <div className="max-h-48 overflow-y-auto">
-                  {groups.map((group) => {
-                    const open = expanded[group.symbol] ?? group.symbol === draft.symbol
-                    return (
-                      <div key={group.symbol}>
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left"
-                          onClick={() => setExpanded((prev) => ({ ...prev, [group.symbol]: !open }))}
-                        >
-                          <ChevronDown className={cn("size-3.5 text-muted-foreground", !open && "-rotate-90")} />
-                          <span className="font-mono text-[12px] font-semibold">{group.symbol}</span>
-                        </button>
-                        {open
-                          ? group.strategies.map((strategy) => (
-                              <button
-                                key={`${strategy.symbol}-${strategy.strategy_id}`}
-                                type="button"
-                                className="block w-full px-8 py-1.5 text-left text-[12px] hover:bg-muted/50"
-                                onClick={() => {
-                                  setDraft((prev) => ({
-                                    ...prev,
-                                    symbol: strategy.symbol,
-                                    strategy_id: strategy.strategy_id,
-                                  }))
-                                  setPickerOpen(false)
-                                }}
-                              >
-                                {strategy.strategy_id}
-                              </button>
-                            ))
-                          : null}
-                      </div>
-                    )
-                  })}
-                </div>
+            {chosen && !replacing ? (
+              <button
+                type="button"
+                onClick={() => setReplacing(true)}
+                className="flex h-9 w-full items-center rounded-md border bg-background px-3 text-left text-[12px] hover:bg-muted/40"
+              >
+                <span className="font-mono font-semibold">{draft.symbol}</span>
+                <span className="text-muted-foreground"> · Strategy {draft.strategy_id}</span>
+              </button>
+            ) : (
+              <div className="relative">
+                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  autoFocus={replacing}
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onBlur={() => {
+                    if (!query.trim()) setReplacing(false)
+                  }}
+                  className="h-9 pl-8 text-[12px]"
+                  placeholder="Search symbol or strategy"
+                />
+              </div>
+            )}
+            {needle ? (
+              <div
+                className="mt-1 max-h-48 overflow-y-auto rounded-md border"
+                onMouseDown={(event) => event.preventDefault()}
+              >
+                {strategiesQ.isLoading ? (
+                  <p className="px-3 py-3 text-[12px] text-muted-foreground">Loading strategies…</p>
+                ) : (
+                  <StrategyMatches matches={matches} draft={draft} onPick={pick} />
+                )}
               </div>
             ) : null}
           </div>
           <div className="space-y-2">
-            <p className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
-              ATR take profit and stop
+            <NumberField
+              label="Bar close (min)"
+              value={draft.chart_tf_minutes}
+              step={1}
+              min={0}
+              onChange={(n) => setNumber("chart_tf_minutes", n)}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Minutes after the signal. 0 keeps the fill at the signal.
             </p>
+          </div>
+          <div className="space-y-2">
+            <p className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+              Exit
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setDraft((prev) => ({ ...prev, exit_mode: "atr" }))}
+                className={cn(
+                  "rounded-md border px-2 py-2 text-left text-[12px]",
+                  draft.exit_mode !== "csv"
+                    ? "border-amber-500/50 bg-amber-500/10"
+                    : "hover:bg-muted/40",
+                )}
+              >
+                <span className="block font-medium">ATR exits</span>
+                <span className="text-[10px] text-muted-foreground">Take profit and stop</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDraft((prev) => ({ ...prev, exit_mode: "csv" }))}
+                className={cn(
+                  "rounded-md border px-2 py-2 text-left text-[12px]",
+                  draft.exit_mode === "csv"
+                    ? "border-amber-500/50 bg-amber-500/10"
+                    : "hover:bg-muted/40",
+                )}
+              >
+                <span className="block font-medium">CSV exit</span>
+                <span className="text-[10px] text-muted-foreground">TradingView close</span>
+              </button>
+            </div>
+            {draft.exit_mode === "csv" ? (
+              <p className="text-[11px] text-muted-foreground">
+                This symbol closes where the CSV says. ATR is not used.
+              </p>
+            ) : (
             <div className="grid grid-cols-2 gap-3">
             <label className="flex flex-col gap-1">
               <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">ATR bar</span>
@@ -776,6 +1129,7 @@ function LineDialog({
             <NumberField label="Take profit × ATR" value={draft.tp_atr_mult} step={0.1} min={0.1} onChange={(n) => setNumber("tp_atr_mult", n)} />
             <NumberField label="Stop × ATR" value={draft.sl_atr_mult} step={0.1} min={0.1} onChange={(n) => setNumber("sl_atr_mult", n)} />
             </div>
+            )}
           </div>
           <div className="space-y-2">
             <p className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
@@ -784,7 +1138,6 @@ function LineDialog({
             <div className="grid grid-cols-2 gap-3">
             <NumberField label="Lots" value={draft.lots} step={0.01} min={0.01} onChange={(n) => setNumber("lots", n)} />
             <NumberField label="Commission / lot" value={draft.commission_per_lot} step={0.5} min={0} onChange={(n) => setNumber("commission_per_lot", n)} />
-            <NumberField label="Starting balance" value={draft.starting_balance} step={100} min={100} onChange={(n) => setNumber("starting_balance", n)} />
             </div>
           </div>
         </div>
@@ -801,18 +1154,102 @@ function LineDialog({
   )
 }
 
+function VipTradesPanel({
+  lines,
+  trades,
+  tradeEquity,
+  timeZone,
+  lineId,
+  onLineId,
+}: {
+  lines: VipLine[]
+  trades: VipRun["signal"]["trades"]
+  tradeEquity: NonNullable<VipRun["signal"]["trade_equity"]>
+  timeZone: string
+  lineId: string | null
+  onLineId: (lineId: string | null) => void
+}) {
+  const selected = lines.find((line) => line.id === lineId) ?? null
+  const shown = selected
+    ? trades.filter((trade) => trade.symbol === selected.symbol && trade.strategy_id === selected.strategy_id)
+    : trades
+  const filled = shown.filter((trade) => trade.status === "ok" && trade.net_pnl_usd != null).length
+
+  return (
+    <div className="flex min-h-[24rem] flex-1 flex-col pb-10">
+      <div className="sticky top-0 z-10 flex shrink-0 flex-wrap items-end justify-between gap-3 border-b border-border bg-background/95 px-4 py-2.5 backdrop-blur-sm">
+        <div>
+          <p className="text-sm font-medium tracking-tight">Simulated trades</p>
+          <p className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+            {filled} filled · {shown.length - filled} skipped
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-1">
+          <SymbolFilterChip active={selected == null} onClick={() => onLineId(null)}>
+            All
+          </SymbolFilterChip>
+          {lines.map((line) => (
+            <SymbolFilterChip
+              key={line.id}
+              active={selected?.id === line.id}
+              onClick={() => onLineId(line.id)}
+            >
+              {`${line.symbol} ${line.strategy_id}`}
+            </SymbolFilterChip>
+          ))}
+        </div>
+      </div>
+      <div className="min-h-0 flex-1">
+        <SimTradesTable
+          rows={shown}
+          tradeEquity={tradeEquity}
+          timeZone={timeZone}
+          showSymbol
+        />
+      </div>
+    </div>
+  )
+}
+
+function SymbolFilterChip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-md border px-2 py-1 font-mono text-[11px] font-medium",
+        active
+          ? "border-amber-500/50 bg-amber-500/10 text-foreground"
+          : "border-border text-muted-foreground hover:bg-muted/40",
+      )}
+    >
+      {children}
+    </button>
+  )
+}
+
 function NumberField({
   label,
   value,
   step,
   min,
   onChange,
+  onBlur,
 }: {
   label: string
   value: number
   step: number
   min: number
   onChange: (n: number) => void
+  onBlur?: () => void
 }) {
   return (
     <label className="flex flex-col gap-1">
@@ -823,138 +1260,9 @@ function NumberField({
         min={min}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
+        onBlur={onBlur}
         className="h-8 font-mono text-[12px]"
       />
     </label>
-  )
-}
-
-function levelsFor(trade: SimulateResponse["trades"][number]) {
-  return [
-    trade.tp_pnl_usd != null
-      ? { y: trade.tp_pnl_usd, label: `TP hit ${formatPnl(trade.tp_pnl_usd)}`, color: "#22c55e" }
-      : null,
-    trade.sl_pnl_usd != null
-      ? { y: trade.sl_pnl_usd, label: `SL hit ${formatPnl(trade.sl_pnl_usd)}`, color: "#ef4444" }
-      : null,
-  ].filter((level): level is { y: number; label: string; color: string } => level != null)
-}
-
-function csvExitMarker(path: { t: string; equity: number }[]) {
-  const last = path[path.length - 1]
-  if (!last) return undefined
-  return [{ t: last.t, y: last.equity, label: `CSV exit ${formatPnl(last.equity)}`, color: "#f59e0b" }]
-}
-
-function EquityGrid({
-  rows,
-  tradeEquity,
-  timeZone,
-}: {
-  rows: SimulateResponse["trades"]
-  tradeEquity: Record<string, { t: string; equity: number; drawdown: number }[]>
-  timeZone: string
-}) {
-  const filled = rows.filter((row) => row.status === "ok" && row.net_pnl_usd != null)
-  if (filled.length === 0) {
-    return <p className="p-6 text-center text-sm text-muted-foreground">No filled trades to chart.</p>
-  }
-  return (
-    <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
-      {filled.map((trade) => {
-        const path = tradeEquity[String(trade.trade_id)] ?? []
-        const reason = trade.exit_reason ?? "signal"
-        return (
-          <div key={trade.trade_id} className="rounded-md border bg-card p-2">
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="truncate font-mono text-[11px] font-semibold">
-                  {trade.symbol} · {trade.strategy_id}
-                </p>
-                <div className="mt-0.5 flex items-center gap-1">
-                  <Badge variant="secondary">{trade.side}</Badge>
-                  <span className="text-[10px] text-muted-foreground">{EXIT_LABEL[reason] ?? reason}</span>
-                </div>
-              </div>
-              <span className={cn("font-mono text-xs font-semibold tabular-nums", pnlClass(trade.net_pnl_usd))}>
-                {formatPnl(trade.net_pnl_usd)}
-              </span>
-            </div>
-            <DeferredTradeEquityChart
-              equity={path}
-              sessionBands={[]}
-              timeZone={timeZone}
-              domain={undefined}
-              levels={levelsFor(trade)}
-              markers={csvExitMarker(path)}
-              guideLabels
-              plain
-              title={`${trade.symbol} ${trade.strategy_id}`}
-              subtitle={EXIT_LABEL[reason] ?? reason}
-            />
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
-function TradesTable({
-  rows,
-  tradeEquity,
-  timeZone,
-}: {
-  rows: SimulateResponse["trades"]
-  tradeEquity: Record<string, { t: string; equity: number; drawdown: number }[]>
-  timeZone: string
-}) {
-  const [zoomedId, setZoomedId] = useState<number | null>(null)
-  const zoomed = rows.find((row) => row.trade_id === zoomedId) ?? null
-  const path = zoomedId != null ? (tradeEquity[String(zoomedId)] ?? []) : []
-  return (
-    <div className="p-2">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Symbol</TableHead>
-            <TableHead>Strategy</TableHead>
-            <TableHead>Side</TableHead>
-            <TableHead>Exit</TableHead>
-            <TableHead className="text-right">Net PnL</TableHead>
-            <TableHead />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {rows
-            .filter((row) => row.status === "ok")
-            .map((row) => (
-              <TableRow key={row.trade_id}>
-                <TableCell className="font-mono text-xs">{row.symbol}</TableCell>
-                <TableCell className="text-xs">{row.strategy_id}</TableCell>
-                <TableCell className="text-xs">{row.side}</TableCell>
-                <TableCell className="text-xs">{EXIT_LABEL[row.exit_reason ?? "signal"] ?? row.exit_reason}</TableCell>
-                <TableCell className={cn("text-right font-mono text-xs tabular-nums", pnlClass(row.net_pnl_usd))}>
-                  {formatPnl(row.net_pnl_usd)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <button type="button" onClick={() => setZoomedId(row.trade_id)} className="text-muted-foreground">
-                    <ZoomIn className="size-3.5" />
-                  </button>
-                </TableCell>
-              </TableRow>
-            ))}
-        </TableBody>
-      </Table>
-      <EquityCurveZoomModal
-        open={zoomed != null}
-        onClose={() => setZoomedId(null)}
-        equity={path}
-        timeZone={timeZone}
-        title={zoomed ? `${zoomed.symbol} ${zoomed.strategy_id}` : "Trade"}
-        subtitle={zoomed ? (EXIT_LABEL[zoomed.exit_reason ?? "signal"] ?? "") : ""}
-        levels={zoomed ? levelsFor(zoomed) : undefined}
-        markers={csvExitMarker(path)}
-      />
-    </div>
   )
 }

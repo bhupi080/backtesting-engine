@@ -1684,16 +1684,18 @@ function TradeWiseGrid({
   )
 }
 
-function SimTradesTable({
+export function SimTradesTable({
   rows,
   tradeEquity,
   timeZone,
+  showSymbol = false,
 }: {
   rows: NonNullable<
     Awaited<ReturnType<typeof api.simulate>>
   >["trades"]
   tradeEquity: Record<string, EquityPoint[]>
   timeZone: string
+  showSymbol?: boolean
 }) {
   const [zoomedId, setZoomedId] = useState<number | null>(null)
   const zoomedRow = useMemo(
@@ -1712,8 +1714,12 @@ function SimTradesTable({
    * Compare-first column order:
    * identity → times (TV vs Sim stacked) → fills/slip/excursion → PnL trio (TV | Sim | Δ) → zoom
    */
-  const rowGrid =
-    "grid grid-cols-[2.5rem_3.5rem_minmax(11rem,1.15fr)_4rem_4rem_3.25rem_3.25rem_4rem_4rem_minmax(13rem,0.95fr)_2rem] items-center gap-x-3 px-3"
+  const rowGrid = cn(
+    "grid items-center gap-x-3 px-3",
+    showSymbol
+      ? "grid-cols-[4.75rem_2.75rem_2.5rem_3.5rem_minmax(11rem,1.15fr)_4rem_4rem_3.25rem_3.25rem_4rem_4rem_minmax(13rem,0.95fr)_2rem]"
+      : "grid-cols-[2.5rem_3.5rem_minmax(11rem,1.15fr)_4rem_4rem_3.25rem_3.25rem_4rem_4rem_minmax(13rem,0.95fr)_2rem]",
+  )
 
   if (rows.length === 0) {
     return (
@@ -1732,6 +1738,12 @@ function SimTradesTable({
         )}
       >
         <span className="py-2.5">#</span>
+        {showSymbol ? (
+          <>
+            <span className="py-2.5">Symbol</span>
+            <span className="py-2.5">Strategy</span>
+          </>
+        ) : null}
         <span className="py-2.5">Dir</span>
         <span className="py-2.5">Open → close</span>
         <span className="py-2.5 text-right">Fill in</span>
@@ -1765,6 +1777,16 @@ function SimTradesTable({
             <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
               {row.trade_id}
             </span>
+            {showSymbol ? (
+              <>
+                <span className="truncate font-mono text-[11px] font-semibold">
+                  {row.symbol ?? "—"}
+                </span>
+                <span className="truncate text-[11px] text-muted-foreground">
+                  {row.strategy_id ?? "—"}
+                </span>
+              </>
+            ) : null}
             <span
               className={cn(
                 "inline-flex w-fit rounded px-1.5 py-0.5 text-[10px] font-semibold tracking-wide",
