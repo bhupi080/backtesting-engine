@@ -1160,7 +1160,10 @@ function SuggestionGrid({
   const data: RiskRewardGrid | undefined = gridQ.data
   const matrix =
     fillGroup === "barClose" && data?.bar_close ? data.bar_close : data?.signal
-  const maxAbs = Math.max(1, ...(matrix ?? []).flat().map((n) => Math.abs(n)))
+  const flat = (matrix ?? []).flat()
+  const lo = flat.length ? Math.min(...flat) : 0
+  const hi = flat.length ? Math.max(...flat) : 1
+  const span = Math.max(hi - lo, 1)
   const mode =
     chartTf > 0 && fillGroup === "barClose" ? `Bar close · ${chartTf}m` : "At signal · 0m"
 
@@ -1205,10 +1208,10 @@ function SuggestionGrid({
           <table className="w-full border-collapse text-[11px]">
             <thead>
               <tr className="border-b border-border bg-muted/50">
-                <th className="sticky left-0 bg-muted px-2 py-2 text-left font-medium">
-                  <span className="text-emerald-600 dark:text-emerald-400">TP</span>
+                <th className="sticky left-0 z-10 bg-muted px-2 py-2 text-left font-medium">
+                  <span className="text-emerald-700 dark:text-emerald-300">TP</span>
                   <span className="mx-1 text-muted-foreground">/</span>
-                  <span className="text-rose-600 dark:text-rose-400">SL</span>
+                  <span className="text-rose-700 dark:text-rose-300">SL</span>
                 </th>
                 {data.sl.map((sl) => {
                   const activeSl = Math.abs(sl - slMult) < 0.001
@@ -1216,10 +1219,10 @@ function SuggestionGrid({
                     <th
                       key={sl}
                       className={cn(
-                        "px-2 py-2 text-center font-mono font-semibold",
+                        "px-2 py-2 text-center font-mono text-[12px] font-medium",
                         activeSl
-                          ? "bg-rose-500/25 text-rose-700 ring-1 ring-inset ring-rose-500 dark:text-rose-300"
-                          : "text-rose-700/90 dark:text-rose-400",
+                          ? "bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-50"
+                          : "bg-rose-50 text-rose-800 dark:bg-rose-950 dark:text-rose-200",
                       )}
                     >
                       ×{sl.toFixed(1)}
@@ -1235,35 +1238,33 @@ function SuggestionGrid({
                 <tr key={tp} className="border-b border-border/60 last:border-0">
                   <th
                     className={cn(
-                      "sticky left-0 px-2 py-1.5 text-left font-mono font-semibold",
+                      "sticky left-0 z-10 px-2 py-1.5 text-left font-mono text-[12px] font-medium",
                       activeTp
-                        ? "bg-emerald-500/25 text-emerald-700 ring-1 ring-inset ring-emerald-500 dark:text-emerald-300"
-                        : "bg-background text-emerald-700/90 dark:text-emerald-400",
+                        ? "bg-emerald-200 text-emerald-950 dark:bg-emerald-900 dark:text-emerald-50"
+                        : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
                     )}
                   >
                     ×{tp.toFixed(1)}
                   </th>
                   {data.sl.map((sl, colIndex) => {
                     const pnl = matrix[rowIndex]?.[colIndex] ?? 0
-                    const strength = Math.min(0.45, (Math.abs(pnl) / maxAbs) * 0.45)
+                    const rank = (pnl - lo) / span
                     const activeSl = Math.abs(sl - slMult) < 0.001
                     const selected = activeTp && activeSl
+                    const wash = pnl >= 0
+                      ? `rgba(16, 185, 129, ${0.05 + rank * 0.62})`
+                      : `rgba(244, 63, 94, ${0.05 + (1 - rank) * 0.62})`
                     return (
-                      <td key={sl} className={cn("p-0.5", activeSl && "bg-rose-500/10", activeTp && "bg-emerald-500/10")}>
+                      <td key={sl} className="p-0.5">
                         <button
                           type="button"
                           onClick={() => setPending({ tp, sl, pnl })}
                           className={cn(
-                            "w-full rounded px-2 py-1.5 text-right font-mono tabular-nums",
-                            pnlClass(pnl),
-                            selected && "ring-2 ring-orange-500",
+                            "w-full rounded-sm px-1.5 py-2 text-center font-mono text-[13px] font-medium tabular-nums leading-none text-foreground",
+                            "hover:ring-1 hover:ring-inset hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+                            selected && "ring-1 ring-inset ring-amber-300",
                           )}
-                          style={{
-                            backgroundColor:
-                              pnl >= 0
-                                ? `rgba(16, 185, 129, ${strength})`
-                                : `rgba(244, 63, 94, ${strength})`,
-                          }}
+                          style={{ backgroundColor: wash }}
                         >
                           {formatPnl(pnl)}
                         </button>

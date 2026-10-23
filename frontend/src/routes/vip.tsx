@@ -123,6 +123,13 @@ function formatPnl(n: number | null | undefined): string {
   return `${sign}${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+function formatTarget(n: number): string {
+  const abs = Math.abs(n)
+  return Number.isInteger(abs)
+    ? abs.toLocaleString()
+    : abs.toLocaleString(undefined, { maximumFractionDigits: 2 })
+}
+
 function pnlClass(n: number | null | undefined): string {
   if (n == null || Number.isNaN(n) || n === 0) return "text-muted-foreground"
   return n > 0
@@ -692,7 +699,8 @@ function VipPage() {
                     lineId={tradeLineId}
                     onLineId={setTradeLineId}
                   />
-                ) : (
+                ) : null}
+                <div className={tab === "suggestions" ? undefined : "hidden"}>
                   <VipSuggestions
                     key={vip.id}
                     vipId={vip.id}
@@ -709,7 +717,7 @@ function VipPage() {
                     accountSl={accountSl}
                     onApply={applyTarget}
                   />
-                )}
+                </div>
               </div>
             </div>
           )}
@@ -1436,9 +1444,17 @@ function VipSuggestions({
         timeZone,
       ),
     enabled: range !== null,
+    staleTime: Infinity,
+    gcTime: 30 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
   const data = gridQ.data
   const matrix = fillGroup === "barClose" && data?.bar_close ? data.bar_close : data?.signal
+  const profits = (matrix ?? []).flat().map((cell) => cell.profit)
+  const lo = profits.length ? Math.min(...profits) : 0
+  const hi = profits.length ? Math.max(...profits) : 1
+  const span = Math.max(hi - lo, 1)
 
   return (
     <div className="flex flex-col gap-3 p-3">
@@ -1450,10 +1466,10 @@ function VipSuggestions({
           </p>
         </div>
         <div className="flex flex-wrap items-end gap-2">
-          <div className="w-24"><NumberField label="TP from" value={tpFrom} onChange={setTpFrom} step={100} min={1} /></div>
-          <div className="w-24"><NumberField label="TP to" value={tpTo} onChange={setTpTo} step={100} min={1} /></div>
-          <div className="w-24"><NumberField label="SL from" value={slFrom} onChange={setSlFrom} step={100} min={1} /></div>
-          <div className="w-24"><NumberField label="SL to" value={slTo} onChange={setSlTo} step={100} min={1} /></div>
+          <div className="w-24"><NumberField label="TP from" value={tpFrom} onChange={setTpFrom} step={step > 0 ? step : 1} min={1} /></div>
+          <div className="w-24"><NumberField label="TP to" value={tpTo} onChange={setTpTo} step={step > 0 ? step : 1} min={1} /></div>
+          <div className="w-24"><NumberField label="SL from" value={slFrom} onChange={setSlFrom} step={step > 0 ? step : 1} min={1} /></div>
+          <div className="w-24"><NumberField label="SL to" value={slTo} onChange={setSlTo} step={step > 0 ? step : 1} min={1} /></div>
           <div className="w-24"><NumberField label="Step" value={step} onChange={setStep} step={50} min={1} /></div>
           <Button
             type="button"
@@ -1470,7 +1486,7 @@ function VipSuggestions({
         <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
           Press Build to fill the table. This works with the account checkbox off.
         </div>
-      ) : gridQ.isFetching ? (
+      ) : gridQ.isLoading ? (
         <LoadingState title="Building the table" message="Replaying each dollar pair on the simulated trades." />
       ) : gridQ.isError ? (
         <p className="text-sm text-destructive">{gridQ.error.message}</p>
@@ -1479,51 +1495,87 @@ function VipSuggestions({
           <table className="w-full border-collapse text-[11px]">
             <thead>
               <tr className="border-b border-border bg-muted/50">
-                <th className="sticky left-0 bg-muted px-2 py-2 text-left font-medium">
-                  <span className="text-emerald-600 dark:text-emerald-400">TP</span>
+                <th className="sticky left-0 z-10 bg-muted px-2 py-2 text-left font-medium">
+                  <span className="text-emerald-700 dark:text-emerald-300">TP</span>
                   <span className="mx-1 text-muted-foreground">/</span>
-                  <span className="text-rose-600 dark:text-rose-400">SL</span>
+                  <span className="text-rose-700 dark:text-rose-300">SL</span>
                 </th>
-                {data.sl.map((sl) => (
-                  <th key={sl} className="px-2 py-2 text-center font-mono font-semibold text-rose-700 dark:text-rose-400">
-                    {formatPnl(-sl)}
-                  </th>
-                ))}
+                {data.sl.map((sl) => {
+                  const activeSl = targetsOn && sl === accountSl
+                  return (
+                    <th
+                      key={sl}
+                      className={cn(
+                        "px-2 py-2 text-center font-mono text-[12px] font-medium",
+                        activeSl
+                          ? "bg-rose-200 text-rose-950 dark:bg-rose-900 dark:text-rose-50"
+                          : "bg-rose-50 text-rose-800 dark:bg-rose-950 dark:text-rose-200",
+                      )}
+                    >
+                      {formatTarget(sl)}
+                    </th>
+                  )
+                })}
               </tr>
             </thead>
             <tbody>
-              {data.tp.map((tp, rowIndex) => (
+              {data.tp.map((tp, rowIndex) => {
+                const activeTp = targetsOn && tp === accountTp
+                return (
                 <tr key={tp} className="border-b border-border/60 last:border-0">
-                  <th className="sticky left-0 bg-background px-2 py-1.5 text-left font-mono font-semibold text-emerald-700 dark:text-emerald-400">
-                    {formatPnl(tp)}
+                  <th
+                    className={cn(
+                      "sticky left-0 z-10 px-2 py-1.5 text-left font-mono text-[12px] font-medium",
+                      activeTp
+                        ? "bg-emerald-200 text-emerald-950 dark:bg-emerald-900 dark:text-emerald-50"
+                        : "bg-emerald-50 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200",
+                    )}
+                  >
+                    {formatTarget(tp)}
                   </th>
                   {data.sl.map((sl, colIndex) => {
                     const cell = matrix[rowIndex]?.[colIndex]
                     if (!cell) return <td key={sl} />
-                    const selected = targetsOn && tp === accountTp && sl === accountSl
+                    const rank = (cell.profit - lo) / span
+                    const selected = activeTp && sl === accountSl
+                    const wash = cell.hit === "none"
+                      ? `rgba(56, 189, 248, ${0.16 + rank * 0.34})`
+                      : cell.profit >= 0
+                        ? `rgba(16, 185, 129, ${0.05 + rank * 0.62})`
+                        : `rgba(244, 63, 94, ${0.05 + (1 - rank) * 0.62})`
+                    const outcome = cell.hit === "tp" ? "Take profit" : cell.hit === "sl" ? "Stop" : "Neither"
                     return (
-                      <td key={sl} className="p-1">
+                      <td key={sl} className="p-0.5">
                         <button
                           type="button"
                           onClick={() => setPending({ tp, sl })}
                           className={cn(
-                            "w-full rounded-md px-2 py-1.5 text-center",
-                            cell.hit === "tp" && "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-                            cell.hit === "sl" && "bg-rose-500/15 text-rose-700 dark:text-rose-300",
-                            cell.hit === "none" && "text-muted-foreground",
-                            selected && "ring-1 ring-inset ring-amber-500",
+                            "flex w-full flex-col items-center gap-1 rounded-sm px-1.5 py-1.5 text-center",
+                            "hover:ring-1 hover:ring-inset hover:ring-white/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300",
+                            selected && "ring-1 ring-inset ring-amber-300",
                           )}
+                          style={{ backgroundColor: wash }}
                         >
-                          <span className="block text-[10px]">
-                            {cell.hit === "tp" ? "Take profit" : cell.hit === "sl" ? "Stop" : "End"}
+                          <span className="font-mono text-[13px] font-medium tabular-nums leading-none text-foreground">
+                            {formatPnl(cell.profit)}
                           </span>
-                          <span className="font-mono">{formatPnl(cell.profit)}</span>
+                          <span
+                            className={cn(
+                              "text-[9px] font-medium tracking-wide uppercase",
+                              cell.hit === "tp" && "text-emerald-300/80",
+                              cell.hit === "sl" && "text-rose-300/80",
+                              cell.hit === "none" && "text-sky-200",
+                            )}
+                          >
+                            {outcome}
+                          </span>
                         </button>
                       </td>
                     )
                   })}
                 </tr>
-              ))}
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -1557,6 +1609,15 @@ function VipSuggestions({
   )
 }
 
+function latticeMin(value: number, step: number): number {
+  if (!(step > 0) || !Number.isFinite(value)) return 0
+  const scale = 1000
+  const scaledStep = Math.round(step * scale)
+  if (scaledStep === 0) return 0
+  const scaledValue = Math.round(value * scale)
+  return (((scaledValue % scaledStep) + scaledStep) % scaledStep) / scale
+}
+
 function NumberField({
   label,
   value,
@@ -1573,12 +1634,24 @@ function NumberField({
   onBlur?: () => void
 }) {
   return (
-    <label className="flex flex-col gap-1">
+    <label
+      className="flex flex-col gap-1"
+      onKeyDownCapture={(event) => {
+        if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return
+        event.preventDefault()
+        event.stopPropagation()
+        const delta = event.key === "ArrowUp" ? step : -step
+        const places = (String(step).split(".")[1] ?? "").length
+        const scale = 10 ** places
+        const next = Math.round((value + delta) * scale) / scale
+        onChange(Math.max(min, next))
+      }}
+    >
       <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">{label}</span>
       <Input
         type="number"
         step={step}
-        min={min}
+        min={latticeMin(value, step)}
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
         onBlur={onBlur}
