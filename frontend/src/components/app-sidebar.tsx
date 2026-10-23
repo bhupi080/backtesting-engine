@@ -2,6 +2,7 @@ import { Link, useRouterState } from "@tanstack/react-router"
 import {
   Activity,
   BarChart3,
+  ChevronRight,
   Crown,
   Database,
   Scale,
@@ -9,10 +10,11 @@ import {
   type LucideIcon,
 } from "lucide-react"
 import { useQuery } from "@tanstack/react-query"
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 import { api } from "@/lib/api"
 import { useFilters } from "@/lib/filters"
+import { cn } from "@/lib/utils"
 import {
   Sidebar,
   SidebarContent,
@@ -21,8 +23,12 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
   SidebarRail,
 } from "@/components/ui/sidebar"
 
@@ -36,7 +42,7 @@ const nav: {
   { to: "/datasets", label: "Datasets", icon: Database, color: "text-emerald-400" },
   { to: "/trades", label: "Trades", icon: BarChart3, color: "text-violet-400" },
   { to: "/simulate", label: "Simulate", icon: Activity, color: "text-rose-400" },
-  { to: "/compare", label: "Risk / Reward", icon: Scale, color: "text-orange-400" },
+  { to: "/risk-reward", label: "Risk / Reward", icon: Scale, color: "text-orange-400" },
   { to: "/vip", label: "VIP", icon: Crown, color: "text-amber-400" },
 ]
 
@@ -48,6 +54,13 @@ export function AppSidebar() {
     queryKey: ["strategies"],
     queryFn: api.strategies,
   })
+
+  const [menuOpen, setMenuOpen] = useState<Record<string, boolean>>({})
+
+  function submenuOpen(to: string): boolean {
+    if (menuOpen[to] != null) return menuOpen[to]
+    return pathname.startsWith(`${to}/`)
+  }
 
   const datasetSymbols = useMemo(
     () => datasets.data?.map((d) => d.symbol) ?? [],
@@ -111,6 +124,35 @@ export function AppSidebar() {
                     <item.icon className={item.color} />
                     <span>{item.label}</span>
                   </SidebarMenuButton>
+                  {item.to === "/risk-reward" || item.to === "/vip" ? (
+                    <>
+                      <SidebarMenuAction
+                        aria-label={submenuOpen(item.to) ? "Collapse" : "Expand"}
+                        onClick={() =>
+                          setMenuOpen((prev) => ({ ...prev, [item.to]: !submenuOpen(item.to) }))
+                        }
+                      >
+                        <ChevronRight
+                          className={cn(
+                            "transition-transform",
+                            submenuOpen(item.to) && "rotate-90",
+                          )}
+                        />
+                      </SidebarMenuAction>
+                      {submenuOpen(item.to) ? (
+                        <SidebarMenuSub>
+                          <SidebarMenuSubItem>
+                            <SidebarMenuSubButton
+                              render={<Link to={item.to === "/risk-reward" ? "/risk-reward/explorer" : "/vip/explorer"} />}
+                              isActive={pathname === `${item.to}/explorer`}
+                            >
+                              <span>TP / SL Grid</span>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        </SidebarMenuSub>
+                      ) : null}
+                    </>
+                  ) : null}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>

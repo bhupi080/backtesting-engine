@@ -126,3 +126,130 @@ export function getSuggestionBuilt(): boolean {
 export function saveSuggestionBuilt(built: boolean): void {
   suggestionBuilt = built
 }
+
+let riskExplorerFillGroup: "signal" | "barClose" = "signal"
+let vipExplorerFillGroup: "signal" | "barClose" = "signal"
+let vipExplorerAccountId: string | null = null
+
+export type VipExplorerRange = {
+  tpFrom: number
+  tpTo: number
+  slFrom: number
+  slTo: number
+  step: number
+}
+
+type VipExplorerBuild = {
+  draft: VipExplorerRange
+  built: VipExplorerRange | null
+}
+
+const vipExplorerBuilds = new Map<string, VipExplorerBuild>()
+
+function emptyVipExplorerBuild(): VipExplorerBuild {
+  return {
+    draft: { tpFrom: 500, tpTo: 1000, slFrom: 100, slTo: 400, step: 100 },
+    built: null,
+  }
+}
+
+export function getVipExplorerBuild(vipId: string): VipExplorerBuild {
+  return vipExplorerBuilds.get(vipId) ?? emptyVipExplorerBuild()
+}
+
+export function saveVipExplorerBuild(vipId: string, build: VipExplorerBuild): void {
+  vipExplorerBuilds.set(vipId, {
+    draft: { ...build.draft },
+    built: build.built ? { ...build.built } : null,
+  })
+}
+let riskExplorerSymbol = ""
+let riskExplorerStrategy = ""
+let riskExplorerChartTf = 10
+let riskExplorerLots = 0.1
+let riskExplorerCommission = 7
+let riskExplorerAtrBar = 60
+let riskExplorerAtrPeriod = 14
+
+export function getRiskExplorerFillGroup(): "signal" | "barClose" {
+  return riskExplorerFillGroup
+}
+
+export function saveRiskExplorerFillGroup(fillGroup: "signal" | "barClose"): void {
+  riskExplorerFillGroup = fillGroup
+}
+
+export function getVipExplorerFillGroup(): "signal" | "barClose" {
+  return vipExplorerFillGroup
+}
+
+export function saveVipExplorerFillGroup(fillGroup: "signal" | "barClose"): void {
+  vipExplorerFillGroup = fillGroup
+}
+
+export function getVipExplorerAccountId(): string | null {
+  return vipExplorerAccountId
+}
+
+export function saveVipExplorerAccountId(id: string | null): void {
+  vipExplorerAccountId = id
+}
+
+export function getRiskExplorerPick(): { symbol: string; strategyId: string } {
+  return { symbol: riskExplorerSymbol, strategyId: riskExplorerStrategy }
+}
+
+export function saveRiskExplorerPick(symbol: string, strategyId: string): void {
+  riskExplorerSymbol = symbol
+  riskExplorerStrategy = strategyId
+}
+
+export function getRiskExplorerChartTf(): number {
+  return riskExplorerChartTf
+}
+
+export function saveRiskExplorerChartTf(minutes: number): void {
+  riskExplorerChartTf = minutes
+}
+
+export function getRiskExplorerLots(): number {
+  return riskExplorerLots
+}
+
+export function saveRiskExplorerLots(lots: number): void {
+  riskExplorerLots = lots
+}
+
+export function getRiskExplorerCommission(): number {
+  return riskExplorerCommission
+}
+
+export function saveRiskExplorerCommission(commission: number): void {
+  riskExplorerCommission = commission
+}
+
+export function getRiskExplorerAtrBar(): number {
+  return riskExplorerAtrBar
+}
+
+export function saveRiskExplorerAtrBar(minutes: number): void {
+  riskExplorerAtrBar = minutes
+}
+
+export function getRiskExplorerAtrPeriod(): number {
+  return riskExplorerAtrPeriod
+}
+
+export function saveRiskExplorerAtrPeriod(period: number): void {
+  riskExplorerAtrPeriod = period
+}
+
+let selectedVipId: string | null = null
+
+export function getSelectedVipId(): string | null {
+  return selectedVipId
+}
+
+export function saveSelectedVipId(id: string | null): void {
+  selectedVipId = id
+}

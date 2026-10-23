@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { Outlet, createFileRoute, useRouterState } from "@tanstack/react-router"
 import { useQuery } from "@tanstack/react-query"
 import { useEffect, useMemo, useRef, useState } from "react"
 import {
@@ -20,13 +20,7 @@ import { api, type RiskRewardGrid, type SimulateResponse, type StrategyInfo } fr
 import { useFilters } from "@/lib/filters"
 import {
   getRiskRewardSession,
-  getSuggestionBuilt,
-  getSuggestionDraft,
-  getSuggestionRange,
   saveRiskRewardSession,
-  saveSuggestionBuilt,
-  saveSuggestionDraft,
-  saveSuggestionRange,
 } from "@/lib/run-session"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -57,9 +51,15 @@ import {
   buildSessionBands,
 } from "@/routes/simulate"
 
-export const Route = createFileRoute("/compare")({
-  component: RiskRewardPage,
+export const Route = createFileRoute("/risk-reward")({
+  component: RiskRewardRoute,
 })
+
+function RiskRewardRoute() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  if (pathname !== "/risk-reward") return <Outlet />
+  return <RiskRewardPage />
+}
 
 const TIMEZONES = [
   { value: "UTC", label: "UTC" },
@@ -70,7 +70,7 @@ const TIMEZONES = [
   { value: "Australia/Sydney", label: "Sydney" },
 ]
 
-const ATR_BARS = [
+export const ATR_BARS = [
   { value: "1", label: "1 min" },
   { value: "5", label: "5 min" },
   { value: "10", label: "10 min" },
@@ -188,7 +188,9 @@ function RiskRewardPage() {
   const [timeZone, setTimeZone] = useState(saved.timeZone)
   const [runKey, setRunKey] = useState(saved.runKey)
   const [committed, setCommitted] = useState<RunConfig | null>(saved.committed)
-  const [activeTab, setActiveTab] = useState(saved.activeTab)
+  const [activeTab, setActiveTab] = useState<"overview" | "analytics" | "trades" | "grid">(
+    saved.activeTab === "suggestions" ? "overview" : saved.activeTab,
+  )
   const [fillGroup, setFillGroup] = useState(saved.fillGroup)
   const [strategyPickerOpen, setStrategyPickerOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen] = useState(saved.sidebarOpen)
@@ -766,6 +768,7 @@ function RiskRewardPage() {
                         tfLabel="0m"
                         pnl={signalPnl}
                         rawPnl={signalRawPnl}
+                        recommended
                         onClick={() => setFillGroup("signal")}
                       />
                       <FillGroupCard
@@ -788,7 +791,6 @@ function RiskRewardPage() {
                     { id: "analytics", label: "Analytics" },
                     { id: "trades", label: "Trades" },
                     { id: "grid", label: "Equity by trade" },
-                    { id: "suggestions", label: "Suggestions" },
                   ] as const
                 ).map((tab) => (
                   <button
@@ -844,20 +846,6 @@ function RiskRewardPage() {
                     tradeEquity={activeSim.trade_equity ?? {}}
                     timeZone={timeZone}
                   />
-                ) : activeTab === "suggestions" ? (
-                  <SuggestionGrid
-                    symbol={committed?.symbol ?? applied.symbol}
-                    strategyId={committed?.strategyId ?? applied.strategyId}
-                    lots={committed?.lots ?? lots}
-                    commission={committed?.commission ?? commission}
-                    chartTf={committed?.chartTf ?? chartTf}
-                    atrBar={committed?.atrBar ?? atrBar}
-                    atrPeriod={committed?.atrPeriod ?? atrPeriod}
-                    fillGroup={fillGroup}
-                    tpMult={tpMult}
-                    slMult={slMult}
-                    onPick={(tp, sl) => runSim({ tpMult: tp, slMult: sl })}
-                  />
                 ) : (
                   <RrTradesTable
                     rows={activeSim.trades}
@@ -891,16 +879,23 @@ function Field({
   onChange,
   step,
   min,
+  compact = false,
 }: {
   label: string
   value: number
   onChange: (n: number) => void
   step: number
   min: number
+  compact?: boolean
 }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+      <span
+        className={cn(
+          "text-[10px] font-medium text-muted-foreground",
+          !compact && "tracking-wide uppercase",
+        )}
+      >
         {label}
       </span>
       <Input
@@ -909,7 +904,7 @@ function Field({
         min={min}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="h-9 w-full font-mono text-[12px]"
+        className={cn("w-full font-mono text-[12px]", compact ? "h-8" : "h-9")}
       />
     </label>
   )
@@ -921,6 +916,7 @@ function FillGroupCard({
   tfLabel,
   pnl,
   rawPnl,
+  recommended = false,
   onClick,
 }: {
   active: boolean
@@ -928,6 +924,7 @@ function FillGroupCard({
   tfLabel: string
   pnl: number | null | undefined
   rawPnl: number | null | undefined
+  recommended?: boolean
   onClick: () => void
 }) {
   return (
@@ -938,7 +935,7 @@ function FillGroupCard({
       className={cn(
         "rounded-md border px-2 py-1.5 text-left transition-all",
         active
-          ? "border-orange-500/50 bg-orange-500/[0.08] ring-1 ring-orange-500/20"
+          ? "border-sky-500/50 bg-sky-500/10 ring-1 ring-sky-500/20"
           : "border-border/80 bg-card/40 hover:bg-muted/40",
       )}
     >
@@ -947,11 +944,18 @@ function FillGroupCard({
           {title}
           <span className="ml-1 font-mono tabular-nums">· {tfLabel}</span>
         </span>
-        {active ? (
-          <span className="shrink-0 rounded bg-orange-600/90 px-1 py-px text-[8px] font-semibold uppercase tracking-wide text-white">
-            On
-          </span>
-        ) : null}
+        <span className="flex shrink-0 items-center gap-1">
+          {recommended ? (
+            <span className="rounded bg-sky-600/90 px-1 py-px text-[8px] font-semibold uppercase tracking-wide text-white">
+              Recommended
+            </span>
+          ) : null}
+          {active ? (
+            <span className="rounded bg-sky-600/90 px-1 py-px text-[8px] font-semibold uppercase tracking-wide text-white">
+              On
+            </span>
+          ) : null}
+        </span>
       </div>
       <div className="mt-1 grid grid-cols-2 gap-2">
         <div>
@@ -1087,7 +1091,7 @@ function ResultStrip({
   )
 }
 
-function SuggestionGrid({
+export function SuggestionGrid({
   symbol,
   strategyId,
   lots,
@@ -1098,6 +1102,7 @@ function SuggestionGrid({
   fillGroup,
   tpMult,
   slMult,
+  range,
   onPick,
 }: {
   symbol: string
@@ -1110,15 +1115,9 @@ function SuggestionGrid({
   fillGroup: "signal" | "barClose"
   tpMult: number
   slMult: number
+  range: { tpFrom: number; tpTo: number; slFrom: number; slTo: number } | null
   onPick: (tp: number, sl: number) => void
 }) {
-  const draft = getSuggestionDraft()
-  const [tpFrom, setTpFrom] = useState(draft.tpFrom)
-  const [tpTo, setTpTo] = useState(draft.tpTo)
-  const [slFrom, setSlFrom] = useState(draft.slFrom)
-  const [slTo, setSlTo] = useState(draft.slTo)
-  const [range, setRange] = useState(getSuggestionRange)
-  const [built, setBuilt] = useState(getSuggestionBuilt)
   const [pending, setPending] = useState<{ tp: number; sl: number; pnl: number } | null>(null)
   const atrBarLabel = ATR_BARS.find((bar) => Number(bar.value) === atrBar)?.label ?? `${atrBar} min`
 
@@ -1133,29 +1132,17 @@ function SuggestionGrid({
         chart_tf_minutes: chartTf,
         atr_bar_minutes: atrBar,
         atr_period: atrPeriod,
-        tp_min: Math.min(range.tpFrom, range.tpTo),
-        tp_max: Math.max(range.tpFrom, range.tpTo),
-        sl_min: Math.min(range.slFrom, range.slTo),
-        sl_max: Math.max(range.slFrom, range.slTo),
+        tp_min: Math.min(range!.tpFrom, range!.tpTo),
+        tp_max: Math.max(range!.tpFrom, range!.tpTo),
+        sl_min: Math.min(range!.slFrom, range!.slTo),
+        sl_max: Math.max(range!.slFrom, range!.slTo),
         step: 0.1,
       }),
-    enabled: built && Boolean(symbol && strategyId),
+    enabled: range !== null && Boolean(symbol && strategyId),
     staleTime: Infinity,
     gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
   })
-
-  useEffect(() => {
-    saveSuggestionDraft({ tpFrom, tpTo, slFrom, slTo })
-  }, [tpFrom, tpTo, slFrom, slTo])
-
-  useEffect(() => {
-    saveSuggestionRange(range)
-  }, [range])
-
-  useEffect(() => {
-    saveSuggestionBuilt(built)
-  }, [built])
 
   const data: RiskRewardGrid | undefined = gridQ.data
   const matrix =
@@ -1164,40 +1151,13 @@ function SuggestionGrid({
   const lo = flat.length ? Math.min(...flat) : 0
   const hi = flat.length ? Math.max(...flat) : 1
   const span = Math.max(hi - lo, 1)
-  const mode =
-    chartTf > 0 && fillGroup === "barClose" ? `Bar close · ${chartTf}m` : "At signal · 0m"
 
   return (
-    <div className="flex flex-col gap-3 p-3">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-sm font-medium tracking-tight">ATR suggestions</p>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {mode}. Set the ranges, then press Build. Each cell is total PnL after commission.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-end gap-2">
-          <div className="w-24"><Field label="TP from" value={tpFrom} onChange={setTpFrom} step={0.1} min={0.1} /></div>
-          <div className="w-24"><Field label="TP to" value={tpTo} onChange={setTpTo} step={0.1} min={0.1} /></div>
-          <div className="w-24"><Field label="SL from" value={slFrom} onChange={setSlFrom} step={0.1} min={0.1} /></div>
-          <div className="w-24"><Field label="SL to" value={slTo} onChange={setSlTo} step={0.1} min={0.1} /></div>
-          <Button
-            type="button"
-            size="sm"
-            className="h-9"
-            disabled={gridQ.isFetching}
-            onClick={() => {
-              setRange({ tpFrom, tpTo, slFrom, slTo })
-              setBuilt(true)
-            }}
-          >
-            {built ? "Update" : "Build"}
-          </Button>
-        </div>
-      </div>
-      {!built ? (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+      {!range ? (
         <div className="flex h-48 items-center justify-center text-sm text-muted-foreground">
-          Press Build to fill the table.
+          Press Build.
         </div>
       ) : gridQ.isFetching ? (
         <LoadingState title="Building the table" message="Checking each take-profit and stop pair…" />
@@ -1278,12 +1238,13 @@ function SuggestionGrid({
           </table>
         </div>
       ) : null}
+      </div>
       <Dialog open={pending != null} onOpenChange={(open) => { if (!open) setPending(null) }}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>Run this ATR pair?</DialogTitle>
+            <DialogTitle>Use this take profit and stop?</DialogTitle>
             <DialogDescription>
-              The other tabs will reload with these levels.
+              These levels are saved on Risk / Reward. Open that page and run to see the equity curve.
             </DialogDescription>
           </DialogHeader>
           {pending ? (
@@ -1320,7 +1281,7 @@ function SuggestionGrid({
                 onPick(next.tp, next.sl)
               }}
             >
-              Run
+              Open Risk / Reward
             </Button>
           </DialogFooter>
         </DialogContent>

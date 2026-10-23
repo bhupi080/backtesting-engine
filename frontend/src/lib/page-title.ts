@@ -45,11 +45,25 @@ export function pageMetaForPath(pathname: string): PageMeta {
       iconClass: "text-rose-500 dark:text-rose-400",
     }
   }
-  if (pathname.startsWith("/compare")) {
+  if (pathname.startsWith("/risk-reward/explorer")) {
+    return {
+      title: "TP / SL Grid",
+      icon: Scale,
+      iconClass: "text-orange-500 dark:text-orange-400",
+    }
+  }
+  if (pathname.startsWith("/risk-reward")) {
     return {
       title: "Risk / Reward",
       icon: Scale,
       iconClass: "text-orange-500 dark:text-orange-400",
+    }
+  }
+  if (pathname.startsWith("/vip/explorer")) {
+    return {
+      title: "TP / SL Grid",
+      icon: Crown,
+      iconClass: "text-amber-500 dark:text-amber-400",
     }
   }
   if (pathname.startsWith("/vip")) {

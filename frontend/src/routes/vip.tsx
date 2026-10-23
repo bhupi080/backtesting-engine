@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router"
+import { Outlet, createFileRoute, useRouterState } from "@tanstack/react-router"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { useEffect, useMemo, useState } from "react"
 import {
@@ -45,13 +45,25 @@ import {
 } from "@/lib/api"
 import { cn } from "@/lib/utils"
 import {
+  getSelectedVipId,
+  getVipExplorerBuild,
+  saveSelectedVipId,
+  saveVipExplorerBuild,
+} from "@/lib/run-session"
+import {
   SimAnalyticsPanel,
   SimTradesTable,
 } from "@/routes/simulate"
 
 export const Route = createFileRoute("/vip")({
-  component: VipPage,
+  component: VipRoute,
 })
+
+function VipRoute() {
+  const pathname = useRouterState({ select: (state) => state.location.pathname })
+  if (pathname !== "/vip") return <Outlet />
+  return <VipPage />
+}
 
 const TIMEZONES = [
   { value: "UTC", label: "UTC" },
@@ -83,7 +95,7 @@ const LINE_COLORS = [
   "#facc15",
 ]
 
-type TabId = "overview" | "analytics" | "trades" | "suggestions"
+type TabId = "overview" | "analytics" | "trades"
 
 function blankLine(): VipLine {
   return {
@@ -171,7 +183,7 @@ function atrLabel(minutes: number): string {
 function VipPage() {
   const queryClient = useQueryClient()
   const vipsQ = useQuery({ queryKey: ["vips"], queryFn: api.vips })
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(getSelectedVipId())
   const [name, setName] = useState("")
   const [timeZone, setTimeZone] = useState("Europe/Bucharest")
   const [balance, setBalance] = useState(2000)
@@ -208,6 +220,7 @@ function VipPage() {
 
   useEffect(() => {
     setTradeLineId(null)
+    if (vip?.id) saveSelectedVipId(vip.id)
   }, [vip?.id])
 
   const save = useMutation({
@@ -303,13 +316,6 @@ function VipPage() {
       ...(next.tp > 0 ? { account_tp_usd: next.tp } : {}),
       ...(next.sl > 0 ? { account_sl_usd: next.sl } : {}),
     })
-  }
-
-  function applyTarget(tp: number, sl: number) {
-    setTargetsOn(true)
-    setAccountTp(tp)
-    setAccountSl(sl)
-    persistTargets({ enabled: true, tp, sl })
   }
 
   return (
@@ -577,7 +583,6 @@ function VipPage() {
                     ["overview", "Overview"],
                     ["analytics", "Analytics"],
                     ["trades", "Trades"],
-                    ["suggestions", "Suggestions"],
                   ] as const
                 ).map(([id, label]) => (
                   <button
@@ -700,24 +705,6 @@ function VipPage() {
                     onLineId={setTradeLineId}
                   />
                 ) : null}
-                <div className={tab === "suggestions" ? undefined : "hidden"}>
-                  <VipSuggestions
-                    key={vip.id}
-                    vipId={vip.id}
-                    lines={vip.lines}
-                    timeZone={timeZone}
-                    fillGroup={showBarClose ? "barClose" : "signal"}
-                    fillLabel={
-                      showBarClose
-                        ? `Bar close · ${barCloseCardLabel(visibleRun.lines.map((row) => row.line))}`
-                        : "At signal · 0m"
-                    }
-                    targetsOn={targetsOn}
-                    accountTp={accountTp}
-                    accountSl={accountSl}
-                    onApply={applyTarget}
-                  />
-                </div>
               </div>
             </div>
           )}
@@ -908,7 +895,7 @@ function FillGroupCard({
       className={cn(
         "h-full rounded-md border px-2 py-1.5 text-left transition-all",
         active
-          ? "border-amber-500/50 bg-amber-500/10 ring-1 ring-amber-500/20"
+          ? "border-sky-500/50 bg-sky-500/10 ring-1 ring-sky-500/20"
           : "border-border/80 bg-card/40 hover:bg-muted/40",
       )}
     >
@@ -919,12 +906,12 @@ function FillGroupCard({
         </span>
         <span className="flex shrink-0 items-center gap-1">
           {recommended ? (
-            <span className="rounded bg-emerald-600/90 px-1 py-px text-[8px] font-semibold tracking-wide text-white uppercase">
+            <span className="rounded bg-sky-600/90 px-1 py-px text-[8px] font-semibold tracking-wide text-white uppercase">
               Recommended
             </span>
           ) : null}
           {active ? (
-            <span className="rounded bg-amber-600/90 px-1 py-px text-[8px] font-semibold tracking-wide text-white uppercase">
+            <span className="rounded bg-sky-600/90 px-1 py-px text-[8px] font-semibold tracking-wide text-white uppercase">
               On
             </span>
           ) : null}
@@ -937,7 +924,7 @@ function FillGroupCard({
   )
 }
 
-function AccountDialog({
+export function AccountDialog({
   open,
   onOpenChange,
   accounts,
@@ -1394,7 +1381,7 @@ function SymbolFilterChip({
   )
 }
 
-function VipSuggestions({
+export function VipSuggestions({
   vipId,
   lines,
   timeZone,
@@ -1415,22 +1402,34 @@ function VipSuggestions({
   accountSl: number
   onApply: (tp: number, sl: number) => void
 }) {
-  const [tpFrom, setTpFrom] = useState(500)
-  const [tpTo, setTpTo] = useState(1000)
-  const [slFrom, setSlFrom] = useState(100)
-  const [slTo, setSlTo] = useState(400)
-  const [step, setStep] = useState(100)
-  const [range, setRange] = useState<{
-    tpFrom: number
-    tpTo: number
-    slFrom: number
-    slTo: number
-    step: number
-  } | null>(null)
+  const savedBuild = getVipExplorerBuild(vipId)
+  const [tpFrom, setTpFrom] = useState(savedBuild.draft.tpFrom)
+  const [tpTo, setTpTo] = useState(savedBuild.draft.tpTo)
+  const [slFrom, setSlFrom] = useState(savedBuild.draft.slFrom)
+  const [slTo, setSlTo] = useState(savedBuild.draft.slTo)
+  const [step, setStep] = useState(savedBuild.draft.step)
+  const [range, setRange] = useState(savedBuild.built)
   const [pending, setPending] = useState<{ tp: number; sl: number } | null>(null)
   const rangeReady = tpFrom > 0 && tpTo >= tpFrom && slFrom > 0 && slTo >= slFrom && step > 0
+  const setupKey = lines
+    .map((line) =>
+      [
+        line.id,
+        line.symbol,
+        line.strategy_id,
+        line.exit_mode,
+        line.atr_bar_minutes,
+        line.atr_period,
+        line.tp_atr_mult,
+        line.sl_atr_mult,
+        line.lots,
+        line.commission_per_lot,
+        line.chart_tf_minutes,
+      ].join(":"),
+    )
+    .join("|")
   const gridQ = useQuery({
-    queryKey: ["vip-targets", vipId, timeZone, lines, range],
+    queryKey: ["vip-targets", vipId, timeZone, setupKey, range],
     queryFn: () =>
       api.vipTargetGrid(
         vipId,
@@ -1448,7 +1447,16 @@ function VipSuggestions({
     gcTime: 30 * 60_000,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
+    refetchOnMount: false,
   })
+
+  useEffect(() => {
+    saveVipExplorerBuild(vipId, {
+      draft: { tpFrom, tpTo, slFrom, slTo, step },
+      built: range,
+    })
+  }, [vipId, tpFrom, tpTo, slFrom, slTo, step, range])
+
   const data = gridQ.data
   const matrix = fillGroup === "barClose" && data?.bar_close ? data.bar_close : data?.signal
   const profits = (matrix ?? []).flat().map((cell) => cell.profit)
@@ -1460,7 +1468,7 @@ function VipSuggestions({
     <div className="flex flex-col gap-3 p-3">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p className="text-sm font-medium tracking-tight">Account suggestions</p>
+          <p className="text-sm font-medium tracking-tight">TP / SL Grid</p>
           <p className="mt-0.5 max-w-xl text-[11px] text-muted-foreground">
             {fillLabel}. Dollars for the whole account. Press Build, then choose a cell. The equity curve stays as it is until you run again.
           </p>
@@ -1585,7 +1593,7 @@ function VipSuggestions({
           <DialogHeader>
             <DialogTitle>Use this take profit and stop?</DialogTitle>
             <DialogDescription>
-              Take profit {formatPnl(pending?.tp)} and stop {formatPnl(pending ? -pending.sl : null)}. The account checkbox turns on. Run again to update the equity curve.
+              These amounts are saved on the VIP account. VIP opens so you can run the equity curve.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -1600,7 +1608,7 @@ function VipSuggestions({
                 setPending(null)
               }}
             >
-              Use these
+              Open VIP
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -404,7 +404,7 @@ def main() -> int:
 
     # Frontend route smoke
     print("\n=== Frontend routes ===")
-    for route in ("/", "/datasets", "/trades", "/simulate", "/overview", "/compare"):
+    for route in ("/", "/datasets", "/trades", "/simulate", "/overview", "/risk-reward"):
         status = get_status(f"{FE}{route}")
         if status == 200:
             ok(f"FE {route} → {status}")
