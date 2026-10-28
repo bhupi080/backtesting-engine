@@ -74,6 +74,27 @@ function formatClock(iso: string | null | undefined, timeZone: string): string |
   })
 }
 
+/** Format "YYYY-MM-DD" analytics period keys. */
+function formatDayPeriod(period: string, style: "short" | "long" = "short"): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(period)
+  if (!m) return period
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])))
+  if (style === "long") {
+    return d.toLocaleDateString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      timeZone: "UTC",
+    })
+  }
+  return d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  })
+}
+
 function tradeDurationMs(t: SimTrade): number | null {
   if (!t.fill_entry_time || !t.fill_exit_time) return null
   const a = Date.parse(t.fill_entry_time)
@@ -234,11 +255,16 @@ export function SimOverviewPanel({
 
   const derived = useMemo(() => {
     let commission = 0
+    let gross = 0
+    let net = 0
     let longestWin: number | null = null
     let longestLoss: number | null = null
 
     for (const t of filled) {
       commission += t.commission_usd ?? 0
+      // Per trade: sim_pnl_usd is price PnL before commission; net_pnl_usd is after.
+      gross += t.sim_pnl_usd ?? 0
+      net += t.net_pnl_usd ?? 0
       const dur = tradeDurationMs(t)
       if (dur == null) continue
       if ((t.net_pnl_usd ?? 0) >= 0) {
@@ -266,6 +292,8 @@ export function SimOverviewPanel({
 
     return {
       commission,
+      gross,
+      net,
       accountMfe,
       accountMfeTime,
       accountMae,
@@ -316,6 +344,20 @@ export function SimOverviewPanel({
 
   const monthlyConfig = {
     pnl: { label: "PnL", color: "var(--chart-1)" },
+  } satisfies ChartConfig
+
+  const dailyData = (a?.daily_pnls ?? []).map((d) => ({
+    day: formatDayPeriod(d.period, "short"),
+    period: d.period,
+    periodLabel: formatDayPeriod(d.period, "long"),
+    pnl: d.pnl_usd,
+    wins: d.wins,
+    losses: d.losses,
+    fill: d.pnl_usd >= 0 ? "#0ea5e9" : "#f43f5e",
+  }))
+
+  const dailyConfig = {
+    pnl: { label: "PnL", color: "#0ea5e9" },
   } satisfies ChartConfig
 
   const sessionData = Object.entries(a?.session_pnls ?? {}).map(
@@ -386,12 +428,30 @@ export function SimOverviewPanel({
   return (
     <div className="space-y-4 p-3 pb-8">
       {hideKpis ? null : (
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
         <MetricCard
-          label="Total PnL"
-          value={`${pnl(summary.sim_pnl_usd)}`}
-          sub={`${pnl(summary.return_pct)}%`}
-          valueClass={pnlClass(summary.sim_pnl_usd)}
+          label="Net PnL"
+          value={`${pnl(derived.net)}`}
+          sub={`${pnl(summary.return_pct)}% after commission`}
+          valueClass={
+            derived.net == null || derived.net === 0
+              ? "text-muted-foreground"
+              : derived.net > 0
+                ? "text-sky-600 dark:text-sky-400"
+                : "text-rose-600 dark:text-rose-400"
+          }
+        />
+        <MetricCard
+          label="Gross PnL"
+          value={`${pnl(derived.gross)}`}
+          sub="before commission"
+          valueClass={
+            derived.gross == null || derived.gross === 0
+              ? "text-muted-foreground"
+              : derived.gross > 0
+                ? "text-amber-600 dark:text-amber-400"
+                : "text-rose-600 dark:text-rose-400"
+          }
         />
         <MetricCard
           label="Commission"
@@ -441,6 +501,88 @@ export function SimOverviewPanel({
           showExtremumStats
           timeZone={timeZone}
         />
+      </ChartCard>
+
+      <ChartCard
+        title="Daily PnL"
+        description={`Net by calendar day · ${dailyData.length} day${dailyData.length === 1 ? "" : "s"}`}
+      >
+        {dailyData.length === 0 ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            No daily data
+          </p>
+        ) : (
+          <ChartContainer
+            config={dailyConfig}
+            className="h-[260px] w-full aspect-auto"
+          >
+            <BarChart
+              accessibilityLayer
+              data={dailyData}
+              margin={{ top: 8, right: 8, left: 0, bottom: dailyData.length > 20 ? 28 : 0 }}
+            >
+              <CartesianGrid vertical={false} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="day"
+                tickLine={false}
+                axisLine={false}
+                tickMargin={8}
+                tick={{ fontSize: 9 }}
+                interval={dailyData.length > 40 ? Math.ceil(dailyData.length / 20) - 1 : 0}
+                angle={dailyData.length > 20 ? -35 : 0}
+                textAnchor={dailyData.length > 20 ? "end" : "middle"}
+                height={dailyData.length > 20 ? 48 : undefined}
+              />
+              <YAxis
+                tickLine={false}
+                axisLine={false}
+                width={48}
+                tick={{ fontSize: 10 }}
+                tickFormatter={(v) => `$${usd(Number(v), 0)}`}
+              />
+              <ChartTooltip
+                cursor={false}
+                content={({ active, payload }) => {
+                  const row = payload?.[0]?.payload as
+                    | {
+                        periodLabel?: string
+                        pnl?: number
+                        wins?: number
+                        losses?: number
+                        fill?: string
+                      }
+                    | undefined
+                  const wl =
+                    row == null
+                      ? ""
+                      : ` · ${row.wins ?? 0}W / ${row.losses ?? 0}L`
+                  return (
+                    <SimpleTooltip
+                      active={active}
+                      label={row?.periodLabel ? `${row.periodLabel}${wl}` : undefined}
+                      payload={
+                        row?.pnl == null
+                          ? []
+                          : [
+                              {
+                                value: row.pnl,
+                                name: "Net PnL",
+                                color: row.fill,
+                              },
+                            ]
+                      }
+                    />
+                  )
+                }}
+              />
+              <Bar dataKey="pnl" radius={[3, 3, 0, 0]}>
+                {dailyData.map((d) => (
+                  <Cell key={d.period} fill={d.fill} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ChartContainer>
+        )}
       </ChartCard>
 
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
